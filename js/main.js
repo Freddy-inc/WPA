@@ -780,3 +780,22 @@ if (window.location.hostname === 'localhost' || window.location.hostname === '12
     }
   });
 }
+
+// Gestion de la bannière image
+document.addEventListener('DOMContentLoaded', function() {
+  const imageBanner = document.querySelector('.image-banner');
+  const closeButton = document.querySelector('.close-banner');
+  
+  // Afficher après 1 seconde
+  setTimeout(() => {
+    imageBanner.classList.add('visible');
+  }, 1000);
+  
+  // Fermer la bannière
+  closeButton.addEventListener('click', function() {
+    imageBanner.style.transform = 'translateY(-100%)';
+    setTimeout(() => {
+      imageBanner.remove();
+    }, 500);
+  });
+});

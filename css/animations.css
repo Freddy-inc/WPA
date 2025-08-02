@@ -795,3 +795,13 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Animation pour la bannière */
+@keyframes slideDownBanner {
+  from { transform: translateY(-100%); }
+  to { transform: translateY(0); }
+}
+
+.promo-banner {
+  animation: slideDownBanner 0.6s ease-out forwards;
+}
