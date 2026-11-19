@@ -28,7 +28,9 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let data_dir = std::env::var("THOT_DATA_DIR").unwrap_or_else(|_| "data".into());
+    let _ = std::fs::create_dir_all(&data_dir);
     let db_path = format!("{data_dir}/thot.db");
+    let pdf_path = PathBuf::from(&data_dir).join("course.pdf");
     let db = Db::connect(&db_path).await?;
 
     let llm = LlmClient::new(LlmConfig::default());
@@ -42,6 +44,7 @@ async fn main() -> anyhow::Result<()> {
         db,
         llm,
         verifier: WebVerifier::new(),
+        pdf_path,
     };
 
     let static_dir = resolve_static_dir();

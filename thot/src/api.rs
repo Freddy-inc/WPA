@@ -1,9 +1,11 @@
 //! HTTP API + AppState for the Thot vertical slice.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
+use axum::body::Body;
 use axum::extract::{Multipart, Path, State};
-use axum::http::StatusCode;
+use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
@@ -22,6 +24,8 @@ pub struct AppState {
     pub db: Db,
     pub llm: LlmClient,
     pub verifier: WebVerifier,
+    /// On-disk copy of the active course PDF (for the page viewer).
+    pub pdf_path: PathBuf,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -30,6 +34,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/status", get(status))
         .route("/api/languages", put(set_languages))
         .route("/api/import", post(import_pdf))
+        .route("/api/course/pdf", get(course_pdf))
         .route("/api/glossary", post(define_glossary))
         .route("/api/generate", post(generate_content))
         .route("/api/fiches", get(list_fiches))
@@ -65,6 +70,7 @@ async fn status(State(st): State<Arc<AppState>>) -> Result<Json<serde_json::Valu
         .map(|v| v.len())
         .unwrap_or(0);
 
+    let has_pdf = st.pdf_path.is_file();
     Ok(Json(json!({
         "provider": st.llm.provider_label(),
         "groq_key_present": st.llm.has_groq_key(),
@@ -75,6 +81,8 @@ async fn status(State(st): State<Arc<AppState>>) -> Result<Json<serde_json::Valu
             "l2": c.l2,
             "preview": c.text.chars().take(280).collect::<String>(),
             "has_text": !c.text.trim().is_empty(),
+            "has_pdf": has_pdf && !c.filename.is_empty(),
+            "pdf_url": if has_pdf && !c.filename.is_empty() { "/api/course/pdf" } else { "" },
         })),
         "fiches_count": fiches.len(),
         "quiz_questions": quiz_count,
@@ -131,6 +139,11 @@ async fn import_pdf(
     }
 
     let extracted = pdf::extract_text(&filename, &bytes).map_err(|e| ApiError::bad(e.to_string()))?;
+    if let Some(parent) = st.pdf_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| ApiError::from(anyhow::anyhow!(e)))?;
+    }
+    std::fs::write(&st.pdf_path, &bytes).map_err(|e| ApiError::from(anyhow::anyhow!(e)))?;
+
     let course = st
         .db
         .upsert_course(&extracted.filename, &extracted.text)
@@ -144,7 +157,35 @@ async fn import_pdf(
         "preview": extracted.text.chars().take(400).collect::<String>(),
         "l1": course.l1,
         "l2": course.l2,
+        "has_pdf": true,
+        "pdf_url": "/api/course/pdf",
     })))
+}
+
+async fn course_pdf(State(st): State<Arc<AppState>>) -> Result<Response, ApiError> {
+    let course = st
+        .db
+        .get_course()
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError::not_found("Aucun cours"))?;
+    if course.filename.is_empty() || course.text.trim().is_empty() {
+        return Err(ApiError::not_found("Aucun PDF importé"));
+    }
+    let bytes = std::fs::read(&st.pdf_path).map_err(|_| {
+        ApiError::not_found("Fichier PDF absent — réimportez le cours")
+    })?;
+    let disposition = format!(
+        "inline; filename=\"{}\"",
+        course.filename.replace('"', "")
+    );
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/pdf")
+        .header(header::CONTENT_DISPOSITION, disposition)
+        .header(header::CACHE_CONTROL, "no-store")
+        .body(Body::from(bytes))
+        .unwrap())
 }
 
 #[derive(Deserialize)]
