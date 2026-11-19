@@ -227,9 +227,14 @@
     async function refreshStatus() {
       try {
         const s = await api("/api/status");
-        const label = s.groq_key_present
-          ? `LLM: Groq (${s.provider})`
-          : `LLM: ${s.provider} (pas de GROQ_API_KEY — Ollama)`;
+        let label;
+        if (s.provider === "stub") {
+          label = "LLM: STUB (démo — pas de Groq/Ollama)";
+        } else if (s.groq_key_present) {
+          label = `LLM: Groq (${s.provider})`;
+        } else {
+          label = `LLM: ${s.provider} (pas de GROQ_API_KEY — Ollama)`;
+        }
         $("provider").textContent = label;
         if (s.course?.has_text) {
           $("preview").hidden = false;

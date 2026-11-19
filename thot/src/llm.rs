@@ -1,4 +1,4 @@
-//! OpenAI-compatible LLM client: Groq (primary) with Ollama fallback.
+//! OpenAI-compatible LLM client: Groq (primary), Ollama fallback, optional stub for demos.
 
 use anyhow::{anyhow, Context, Result};
 use reqwest::Client;
@@ -23,10 +23,16 @@ pub struct LlmConfig {
     pub groq_batch_model: String,
     pub ollama_base: String,
     pub ollama_model: String,
+    /// When true, skip remote LLMs and return deterministic demo JSON.
+    pub force_stub: bool,
 }
 
 impl Default for LlmConfig {
     fn default() -> Self {
+        let force_stub = matches!(
+            std::env::var("THOT_LLM_STUB").as_deref(),
+            Ok("1") | Ok("true") | Ok("yes")
+        );
         Self {
             groq_api_key: std::env::var("GROQ_API_KEY").ok().filter(|k| !k.is_empty()),
             groq_interactive_model: std::env::var("THOT_GROQ_INTERACTIVE_MODEL")
@@ -37,6 +43,7 @@ impl Default for LlmConfig {
                 .unwrap_or_else(|_| OLLAMA_BASE.into()),
             ollama_model: std::env::var("THOT_OLLAMA_MODEL")
                 .unwrap_or_else(|_| "qwen2.5".into()),
+            force_stub,
         }
     }
 }
@@ -45,6 +52,8 @@ impl Default for LlmConfig {
 pub struct LlmClient {
     http: Client,
     config: LlmConfig,
+    /// Becomes true after first successful stub fallback (or when force_stub).
+    used_stub: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -79,10 +88,24 @@ impl LlmClient {
             .timeout(std::time::Duration::from_secs(120))
             .build()
             .expect("reqwest client");
-        Self { http, config }
+        let used_stub = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+            config.force_stub,
+        ));
+        Self {
+            http,
+            config,
+            used_stub,
+        }
     }
 
     pub fn provider_label(&self) -> &'static str {
+        if self.config.force_stub
+            || self
+                .used_stub
+                .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            return "stub";
+        }
         if self.config.groq_api_key.is_some() {
             "groq"
         } else {
@@ -94,6 +117,13 @@ impl LlmClient {
         self.config.groq_api_key.is_some()
     }
 
+    pub fn is_stub(&self) -> bool {
+        self.config.force_stub
+            || self
+                .used_stub
+                .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     /// Chat completion returning raw assistant text.
     pub async fn chat(
         &self,
@@ -102,6 +132,11 @@ impl LlmClient {
         user: &str,
         json_mode: bool,
     ) -> Result<String> {
+        if self.config.force_stub {
+            info!(provider = "stub", "Using forced LLM stub");
+            return Ok(stub_response(system, user));
+        }
+
         let messages = vec![
             ChatMessage {
                 role: "system".into(),
@@ -133,18 +168,30 @@ impl LlmClient {
                 }
             }
         } else {
-            info!("No GROQ_API_KEY; using Ollama");
+            info!("No GROQ_API_KEY; trying Ollama");
         }
 
-        self.call_openai_compatible(
-            &self.config.ollama_base,
-            None,
-            self.model_for(role, false),
-            &messages,
-            json_mode,
-        )
-        .await
-        .context("Ollama LLM call failed (is Ollama running with the configured model?)")
+        match self
+            .call_openai_compatible(
+                &self.config.ollama_base,
+                None,
+                self.model_for(role, false),
+                &messages,
+                json_mode,
+            )
+            .await
+        {
+            Ok(text) => {
+                info!(provider = "ollama", "LLM call succeeded");
+                Ok(text)
+            }
+            Err(err) => {
+                warn!(error = %err, "Ollama failed; using stub responses");
+                self.used_stub
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                Ok(stub_response(system, user))
+            }
+        }
     }
 
     /// Chat and parse the assistant content as JSON.
@@ -209,6 +256,96 @@ impl LlmClient {
             .ok_or_else(|| anyhow!("empty choices from LLM"))?;
         Ok(content)
     }
+}
+
+/// Deterministic demo responses when no live LLM is available.
+fn stub_response(system: &str, user: &str) -> String {
+    let blob = format!("{system}\n{user}").to_lowercase();
+    if blob.contains("\"fiches\"") || blob.contains("flashcard") {
+        return json!({
+            "fiches": [
+                {
+                    "front": "[STUB] Photosynthesis",
+                    "back": "Processus par lequel les plantes convertissent la lumière en énergie chimique (glucose)."
+                },
+                {
+                    "front": "[STUB] Chlorophyll",
+                    "back": "Pigment vert des chloroplastes qui absorbe la lumière du soleil."
+                },
+                {
+                    "front": "[STUB] Calvin cycle",
+                    "back": "Fixation du carbone dans le stroma ; produit des glucides."
+                },
+                {
+                    "front": "[STUB] Thylakoid membrane",
+                    "back": "Lieu des réactions dépendantes de la lumière."
+                },
+                {
+                    "front": "[STUB] Stomata",
+                    "back": "Ouvertures qui régulent les échanges gazeux (CO₂ / O₂)."
+                }
+            ]
+        })
+        .to_string();
+    }
+    if blob.contains("\"questions\"") || blob.contains("multiple-choice quiz") {
+        return json!({
+            "questions": [
+                {
+                    "question": "[STUB] What does photosynthesis convert light energy into?",
+                    "choices": ["Heat only", "Chemical energy (glucose)", "Sound", "Magnetic fields"],
+                    "answer_index": 1,
+                    "notion": "photosynthesis"
+                },
+                {
+                    "question": "[STUB] Where do light-dependent reactions occur?",
+                    "choices": ["Nucleus", "Stroma", "Thylakoid membrane", "Cell wall"],
+                    "answer_index": 2,
+                    "notion": "thylakoid"
+                },
+                {
+                    "question": "[STUB] Which gas is released as a byproduct?",
+                    "choices": ["Nitrogen", "Oxygen", "Methane", "Helium"],
+                    "answer_index": 1,
+                    "notion": "oxygen"
+                },
+                {
+                    "question": "[STUB] What pigment absorbs sunlight?",
+                    "choices": ["Hemoglobin", "Melanin", "Chlorophyll", "Keratin"],
+                    "answer_index": 2,
+                    "notion": "chlorophyll"
+                },
+                {
+                    "question": "[STUB] Where does the Calvin cycle fix carbon?",
+                    "choices": ["Stroma", "Mitochondria", "Vacuole", "Cytoplasm only"],
+                    "answer_index": 0,
+                    "notion": "Calvin cycle"
+                }
+            ]
+        })
+        .to_string();
+    }
+
+    // Glossary draft / reconcile
+    let term = extract_term_hint(user).unwrap_or_else(|| "term".into());
+    json!({
+        "term_l2": term,
+        "meaning_l1": format!(
+            "[STUB] Sens pédagogique de « {term} » dans le contexte du cours (démo sans LLM distant)."
+        ),
+        "verified": false,
+        "confidence": 0.55
+    })
+    .to_string()
+}
+
+fn extract_term_hint(user: &str) -> Option<String> {
+    if let Ok(v) = serde_json::from_str::<Value>(user) {
+        if let Some(t) = v.get("term_l2").and_then(|x| x.as_str()) {
+            return Some(t.to_string());
+        }
+    }
+    None
 }
 
 /// Strip markdown fences and parse JSON.

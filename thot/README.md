@@ -39,6 +39,9 @@ Open **http://127.0.0.1:8787/**
 | `THOT_GROQ_BATCH_MODEL` | `openai/gpt-oss-120b` | Fiches / quiz model |
 | `THOT_OLLAMA_BASE` | `http://127.0.0.1:11434/v1` | Ollama OpenAI base |
 | `THOT_OLLAMA_MODEL` | `qwen2.5` | Local model id |
+| `THOT_LLM_STUB` | _(off)_ | `1` = deterministic stub responses (demo / CI without LLM) |
+
+If Groq and Ollama are both unavailable, the client **falls back to stub** automatically and labels responses with `[STUB]`.
 
 Sample PDF: `fixtures/sample-photosynthesis.pdf`.
 

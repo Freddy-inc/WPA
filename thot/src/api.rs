@@ -43,6 +43,7 @@ struct Health {
     ok: bool,
     provider: String,
     groq_key_present: bool,
+    stub: bool,
 }
 
 async fn health(State(st): State<Arc<AppState>>) -> Json<Health> {
@@ -50,6 +51,7 @@ async fn health(State(st): State<Arc<AppState>>) -> Json<Health> {
         ok: true,
         provider: st.llm.provider_label().into(),
         groq_key_present: st.llm.has_groq_key(),
+        stub: st.llm.is_stub(),
     })
 }
 
