@@ -19,7 +19,7 @@ pub enum ModelRole {
 #[derive(Debug, Clone)]
 pub struct LlmConfig {
     pub groq_api_key: Option<String>,
-    /// Which env var supplied the Groq key: `"GROQ_API_KEY"` | `"Etude"` | none.
+    /// Which env var supplied the Groq key: `GROQ_API_KEY` | `Etude` | `Etudes` | none.
     pub groq_key_env: Option<&'static str>,
     pub groq_interactive_model: String,
     pub groq_batch_model: String,
@@ -29,21 +29,20 @@ pub struct LlmConfig {
     pub force_stub: bool,
 }
 
-/// Resolve Groq API key: prefer `GROQ_API_KEY`, else fallback `Etude`. Never log the value.
+/// Resolve Groq API key: `GROQ_API_KEY` → `Etude` → `Etudes`. Never log the value.
 pub fn resolve_groq_key() -> (Option<String>, Option<&'static str>) {
-    let from_groq = std::env::var("GROQ_API_KEY")
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|k| !k.is_empty());
-    if from_groq.is_some() {
-        return (from_groq, Some("GROQ_API_KEY"));
-    }
-    let from_etude = std::env::var("Etude")
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|k| !k.is_empty());
-    if from_etude.is_some() {
-        return (from_etude, Some("Etude"));
+    for (name, key) in [
+        ("GROQ_API_KEY", std::env::var("GROQ_API_KEY")),
+        ("Etude", std::env::var("Etude")),
+        ("Etudes", std::env::var("Etudes")),
+    ] {
+        let trimmed = key
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|k| !k.is_empty());
+        if trimmed.is_some() {
+            return (trimmed, Some(name));
+        }
     }
     (None, None)
 }
@@ -140,7 +139,7 @@ impl LlmClient {
         self.config.groq_api_key.is_some()
     }
 
-    /// Env var name that provided the Groq key (`GROQ_API_KEY` or `Etude`), if any.
+    /// Env var name that provided the Groq key (`GROQ_API_KEY` / `Etude` / `Etudes`), if any.
     pub fn groq_key_env_name(&self) -> Option<&'static str> {
         self.config.groq_key_env
     }
@@ -196,7 +195,7 @@ impl LlmClient {
                 }
             }
         } else {
-            info!("No GROQ_API_KEY; trying Ollama");
+            info!("No Groq key (GROQ_API_KEY / Etude / Etudes); trying Ollama");
         }
 
         match self

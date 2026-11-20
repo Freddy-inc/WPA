@@ -719,7 +719,7 @@
           const src = s.groq_key_env ? ` via ${s.groq_key_env}` : "";
           label = `LLM: Groq${src}`;
         } else {
-          label = `LLM: ${s.provider} (pas de GROQ_API_KEY / Etude)`;
+          label = `LLM: ${s.provider} (pas de GROQ_API_KEY / Etude / Etudes)`;
         }
         $("provider").textContent = label;
         const langs = s.languages || {};

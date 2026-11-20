@@ -69,7 +69,7 @@ struct Health {
     ok: bool,
     provider: String,
     groq_key_present: bool,
-    /// Which env name held the key: `GROQ_API_KEY` | `Etude` | null. Never the secret.
+    /// Which env name held the key: `GROQ_API_KEY` | `Etude` | `Etudes` | null. Never the secret.
     groq_key_env: Option<String>,
     stub: bool,
 }
