@@ -103,6 +103,19 @@ impl Db {
                 questions_json TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS pages_opened (
+                page INTEGER PRIMARY KEY CHECK (page >= 1)
+            );
+            CREATE TABLE IF NOT EXISTS reading_meta (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                total_pages INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS quiz_attempts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                score INTEGER NOT NULL,
+                total INTEGER NOT NULL,
+                created_at TEXT NOT NULL
+            );
             "#,
         )
         .execute(&self.pool)
@@ -151,6 +164,15 @@ impl Db {
             .execute(&self.pool)
             .await?;
         sqlx::query("DELETE FROM quiz")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM pages_opened")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM reading_meta")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM quiz_attempts")
             .execute(&self.pool)
             .await?;
 
@@ -293,6 +315,102 @@ impl Db {
         .await?;
         Ok(row)
     }
+
+    /// Record that a PDF page was opened (idempotent). Optionally update total page count.
+    pub async fn mark_page_opened(&self, page: i64, total_pages: Option<i64>) -> Result<()> {
+        if page < 1 {
+            return Ok(());
+        }
+        sqlx::query("INSERT OR IGNORE INTO pages_opened (page) VALUES (?)")
+            .bind(page)
+            .execute(&self.pool)
+            .await?;
+        if let Some(total) = total_pages.filter(|t| *t > 0) {
+            sqlx::query(
+                "INSERT INTO reading_meta (id, total_pages) VALUES (1, ?)
+                 ON CONFLICT(id) DO UPDATE SET total_pages = MAX(reading_meta.total_pages, excluded.total_pages)",
+            )
+            .bind(total)
+            .execute(&self.pool)
+            .await?;
+        }
+        Ok(())
+    }
+
+    pub async fn pages_opened_count(&self) -> Result<i64> {
+        let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM pages_opened")
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(n)
+    }
+
+    pub async fn pages_opened_list(&self) -> Result<Vec<i64>> {
+        let rows: Vec<(i64,)> = sqlx::query_as("SELECT page FROM pages_opened ORDER BY page")
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows.into_iter().map(|(p,)| p).collect())
+    }
+
+    pub async fn total_pages(&self) -> Result<i64> {
+        let row: Option<(i64,)> =
+            sqlx::query_as("SELECT total_pages FROM reading_meta WHERE id = 1")
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(row.map(|(n,)| n).unwrap_or(0))
+    }
+
+    pub async fn record_quiz_attempt(&self, score: i64, total: i64) -> Result<()> {
+        let now = now_iso();
+        sqlx::query(
+            "INSERT INTO quiz_attempts (score, total, created_at) VALUES (?, ?, ?)",
+        )
+        .bind(score)
+        .bind(total)
+        .bind(&now)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn quiz_attempt_stats(&self) -> Result<(i64, Option<(i64, i64)>)> {
+        let (attempts,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM quiz_attempts")
+            .fetch_one(&self.pool)
+            .await?;
+        let last: Option<(i64, i64)> = sqlx::query_as(
+            "SELECT score, total FROM quiz_attempts ORDER BY id DESC LIMIT 1",
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok((attempts, last))
+    }
+
+    pub async fn progression_snapshot(&self) -> Result<ProgressionSnapshot> {
+        let pages_opened = self.pages_opened_count().await?;
+        let pages_list = self.pages_opened_list().await?;
+        let total_pages = self.total_pages().await?;
+        let fiches = self.list_fiches().await?.len() as i64;
+        let (attempts, last) = self.quiz_attempt_stats().await?;
+        Ok(ProgressionSnapshot {
+            pages_opened,
+            total_pages,
+            pages: pages_list,
+            fiches_count: fiches,
+            quiz_attempts: attempts,
+            last_score: last.map(|(s, _)| s),
+            last_total: last.map(|(_, t)| t),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProgressionSnapshot {
+    pub pages_opened: i64,
+    pub total_pages: i64,
+    pub pages: Vec<i64>,
+    pub fiches_count: i64,
+    pub quiz_attempts: i64,
+    pub last_score: Option<i64>,
+    pub last_total: Option<i64>,
 }
 
 fn now_iso() -> String {

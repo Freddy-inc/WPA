@@ -40,6 +40,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/fiches", get(list_fiches))
         .route("/api/fiches/{id}", put(update_fiche))
         .route("/api/quiz", get(get_quiz))
+        .route("/api/quiz/attempt", post(quiz_attempt))
+        .route("/api/pages/open", post(open_page))
+        .route("/api/progression", get(progression))
         .with_state(Arc::new(state))
 }
 
@@ -86,6 +89,7 @@ async fn status(State(st): State<Arc<AppState>>) -> Result<Json<serde_json::Valu
         })),
         "fiches_count": fiches.len(),
         "quiz_questions": quiz_count,
+        "progression": st.db.progression_snapshot().await.map_err(ApiError::from)?,
     })))
 }
 
@@ -290,6 +294,56 @@ async fn get_quiz(State(st): State<Arc<AppState>>) -> Result<Json<serde_json::Va
         }
         None => Ok(Json(json!({ "questions": [] }))),
     }
+}
+
+#[derive(Deserialize)]
+struct OpenPageBody {
+    page: i64,
+    #[serde(default)]
+    total_pages: Option<i64>,
+}
+
+async fn open_page(
+    State(st): State<Arc<AppState>>,
+    Json(body): Json<OpenPageBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if body.page < 1 {
+        return Err(ApiError::bad("page doit être ≥ 1"));
+    }
+    st.db
+        .mark_page_opened(body.page, body.total_pages)
+        .await
+        .map_err(ApiError::from)?;
+    let snap = st.db.progression_snapshot().await.map_err(ApiError::from)?;
+    Ok(Json(json!({ "ok": true, "progression": snap })))
+}
+
+#[derive(Deserialize)]
+struct QuizAttemptBody {
+    score: i64,
+    total: i64,
+}
+
+async fn quiz_attempt(
+    State(st): State<Arc<AppState>>,
+    Json(body): Json<QuizAttemptBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if body.total < 1 || body.score < 0 || body.score > body.total {
+        return Err(ApiError::bad("score/total invalides"));
+    }
+    st.db
+        .record_quiz_attempt(body.score, body.total)
+        .await
+        .map_err(ApiError::from)?;
+    let snap = st.db.progression_snapshot().await.map_err(ApiError::from)?;
+    Ok(Json(json!({ "ok": true, "progression": snap })))
+}
+
+async fn progression(
+    State(st): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let snap = st.db.progression_snapshot().await.map_err(ApiError::from)?;
+    Ok(Json(json!(snap)))
 }
 
 /* ---------- errors ---------- */

@@ -103,7 +103,19 @@
     .fiche { border-top: 1px solid var(--line); padding: 0.65rem 0; }
     .fiche strong { display: block; }
     .quiz-q { border-top: 1px solid var(--line); padding: 0.7rem 0; }
-    .quiz-q ul { margin: 0.35rem 0 0; padding-left: 1.1rem; }
+    .quiz-q ul { margin: 0.35rem 0 0; padding-left: 1.1rem; list-style: none; }
+    .quiz-q label { display: flex; gap: 0.45rem; align-items: flex-start; cursor: pointer; color: var(--ink); margin: 0.25rem 0; }
+    .prog-block {
+      border-top: 1px solid var(--line);
+      padding: 0.85rem 0;
+    }
+    .prog-block:first-of-type { border-top: none; padding-top: 0; }
+    .prog-block h3 {
+      font-family: var(--font-display);
+      font-size: 1.05rem;
+      margin: 0 0 0.35rem;
+    }
+    .prog-block .value { font-size: 1.15rem; font-weight: 600; }
     .badge {
       display: inline-block;
       margin-top: 0.35rem;
@@ -311,6 +323,32 @@
       <div id="fichesOut"></div>
       <div id="quizOut"></div>
     </section>
+
+    <section id="progression">
+      <h2>4. Progression</h2>
+      <div class="prog-block">
+        <h3>Lecture</h3>
+        <div class="value" id="progPages">Pages ouvertes : 0 / 0</div>
+        <p class="meta">Chaque page vue dans le lecteur compte une fois.</p>
+      </div>
+      <div class="prog-block">
+        <h3>Fiches</h3>
+        <div class="value" id="progFiches">0 disponibles</div>
+      </div>
+      <div class="prog-block">
+        <h3>Quiz</h3>
+        <div class="value" id="progQuiz">Aucune tentative</div>
+      </div>
+      <div class="prog-block">
+        <h3>Ensuite ?</h3>
+        <div class="actions" style="margin-top:0.35rem">
+          <button type="button" id="ctaReread">Relire le PDF</button>
+          <button type="button" class="secondary" id="ctaFiches">Réviser les fiches</button>
+          <button type="button" class="secondary" id="ctaQuiz">Rejouer le quiz</button>
+        </div>
+      </div>
+      <div id="progMsg" class="meta"></div>
+    </section>
   </main>
 
   <div id="selMenu" role="dialog" aria-label="Menu sélection">
@@ -332,6 +370,9 @@
     let currentPage = 1;
     let lastSelection = "";
     let menuPinned = false;
+    let quizQuestions = [];
+    let quizIndex = 0;
+    let quizAnswers = [];
 
     async function api(path, opts = {}) {
       const res = await fetch(path, opts);
@@ -371,9 +412,33 @@
           $("pdfTitle").textContent = s.course.filename || "Cours";
           await openPdf("/api/course/pdf", s.course.filename);
         }
+        renderProgression(s.progression);
       } catch (e) {
         $("provider").textContent = "API indisponible";
       }
+    }
+
+    function renderProgression(p) {
+      if (!p) return;
+      const total = p.total_pages || 0;
+      const opened = p.pages_opened || 0;
+      $("progPages").textContent = `Pages ouvertes : ${opened} / ${total || "—"}`;
+      $("progFiches").textContent = `${p.fiches_count || 0} disponibles`;
+      if ((p.quiz_attempts || 0) === 0) {
+        $("progQuiz").textContent = "Aucune tentative";
+      } else {
+        const score = (p.last_score != null && p.last_total != null)
+          ? `Dernier score : ${p.last_score}/${p.last_total}`
+          : "Dernier score : —";
+        $("progQuiz").textContent = `Tentatives : ${p.quiz_attempts} · ${score}`;
+      }
+    }
+
+    async function refreshProgression() {
+      try {
+        const p = await api("/api/progression");
+        renderProgression(p);
+      } catch (_) { /* ignore */ }
     }
 
     $("saveLangs").onclick = async () => {
@@ -491,6 +556,19 @@
           textLayerDiv.appendChild(span);
         });
       }
+
+      // Metric: pages ouvertes (idempotent server-side)
+      try {
+        const res = await api("/api/pages/open", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            page: num,
+            total_pages: pdfDoc ? pdfDoc.numPages : null,
+          }),
+        });
+        if (res.progression) renderProgression(res.progression);
+      } catch (_) { /* non-blocking */ }
     }
 
     /* ---- Selection menu ---- */
@@ -606,17 +684,12 @@
             .map((f) => `<div class="fiche"><strong>${escapeHtml(f.front)}</strong><span>${escapeHtml(f.back)}</span></div>`)
             .join("");
           setMsg($("genMsg"), `${data.fiches.length} fiches générées`, true);
+          await refreshProgression();
+          $("progression").scrollIntoView({ behavior: "smooth", block: "nearest" });
         } else {
           $("fichesOut").innerHTML = "";
-          $("quizOut").innerHTML = (data.questions || [])
-            .map((q, i) => {
-              const choices = (q.choices || [])
-                .map((c, j) => `<li${j === q.answer_index ? ' style="font-weight:700"' : ""}>${escapeHtml(c)}</li>`)
-                .join("");
-              return `<div class="quiz-q"><strong>Q${i + 1}.</strong> ${escapeHtml(q.question)}<ul>${choices}</ul><div class="meta">Notion : ${escapeHtml(q.notion || "—")}</div></div>`;
-            })
-            .join("");
-          setMsg($("genMsg"), `${data.count} questions générées`, true);
+          startQuiz(data.questions || []);
+          setMsg($("genMsg"), `${data.count} questions — répondez pour enregistrer le score`, true);
         }
       } catch (e) {
         setMsg($("genMsg"), e.message, false);
@@ -626,8 +699,129 @@
       }
     }
 
+    function startQuiz(questions) {
+      quizQuestions = questions.slice();
+      // Shuffle order each attempt (brief: random order)
+      for (let i = quizQuestions.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [quizQuestions[i], quizQuestions[j]] = [quizQuestions[j], quizQuestions[i]];
+      }
+      quizIndex = 0;
+      quizAnswers = [];
+      if (!quizQuestions.length) {
+        $("quizOut").innerHTML = `<p class="err">Aucune question</p>`;
+        return;
+      }
+      renderQuizQuestion();
+    }
+
+    function renderQuizQuestion() {
+      const q = quizQuestions[quizIndex];
+      const choices = (q.choices || [])
+        .map((c, j) => `<li><label><input type="radio" name="quizChoice" value="${j}" /> <span>${escapeHtml(c)}</span></label></li>`)
+        .join("");
+      $("quizOut").innerHTML = `
+        <div class="quiz-q">
+          <div class="meta">Quiz · Q ${quizIndex + 1} / ${quizQuestions.length}</div>
+          <strong>${escapeHtml(q.question)}</strong>
+          <ul>${choices}</ul>
+          <div class="actions">
+            <button type="button" id="quizValidate">Valider</button>
+          </div>
+          <div id="quizStepMsg"></div>
+        </div>
+      `;
+      $("quizValidate").onclick = () => {
+        const picked = document.querySelector('input[name="quizChoice"]:checked');
+        if (!picked) {
+          setMsg($("quizStepMsg"), "Choisissez une réponse", false);
+          return;
+        }
+        quizAnswers.push(Number(picked.value));
+        if (quizIndex + 1 < quizQuestions.length) {
+          quizIndex += 1;
+          renderQuizQuestion();
+        } else {
+          finishQuiz();
+        }
+      };
+    }
+
+    async function finishQuiz() {
+      let score = 0;
+      quizQuestions.forEach((q, i) => {
+        if (quizAnswers[i] === q.answer_index) score += 1;
+      });
+      const total = quizQuestions.length;
+      const feedback = quizQuestions.map((q, i) => {
+        const ok = quizAnswers[i] === q.answer_index;
+        return `<div class="meta">${ok ? "✓" : "✗"} Q${i + 1} — ${escapeHtml(q.notion || "notion")}</div>`;
+      }).join("");
+      $("quizOut").innerHTML = `
+        <div class="quiz-q">
+          <strong>Résultat : ${score} / ${total}</strong>
+          ${feedback}
+          <div class="actions">
+            <button type="button" id="quizReplay">Rejouer</button>
+          </div>
+        </div>
+      `;
+      try {
+        const res = await api("/api/quiz/attempt", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ score, total }),
+        });
+        if (res.progression) renderProgression(res.progression);
+        setMsg($("genMsg"), `Score enregistré : ${score}/${total}`, true);
+      } catch (e) {
+        setMsg($("genMsg"), e.message, false);
+      }
+      $("quizReplay").onclick = () => startQuiz(quizQuestions.slice());
+      $("progression").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+
     $("fichesBtn").onclick = () => generate("fiches");
     $("quizBtn").onclick = () => generate("quiz");
+
+    $("ctaReread").onclick = () => {
+      if ($("readerSection").classList.contains("visible")) {
+        $("readerSection").scrollIntoView({ behavior: "smooth", block: "start" });
+      } else {
+        $("import").scrollIntoView({ behavior: "smooth", block: "start" });
+        $("progMsg").textContent = "Importez un PDF pour lire.";
+      }
+    };
+    $("ctaFiches").onclick = async () => {
+      $("generate").scrollIntoView({ behavior: "smooth", block: "start" });
+      try {
+        const data = await api("/api/fiches");
+        if ((data.fiches || []).length) {
+          $("fichesOut").innerHTML = data.fiches
+            .map((f) => `<div class="fiche"><strong>${escapeHtml(f.front)}</strong><span>${escapeHtml(f.back)}</span></div>`)
+            .join("");
+          $("quizOut").innerHTML = "";
+        } else {
+          $("progMsg").textContent = "Aucune fiche — générez-en depuis le cours.";
+        }
+      } catch (e) {
+        $("progMsg").textContent = e.message;
+      }
+    };
+    $("ctaQuiz").onclick = async () => {
+      $("generate").scrollIntoView({ behavior: "smooth", block: "start" });
+      try {
+        const data = await api("/api/quiz");
+        if ((data.questions || []).length) {
+          startQuiz(data.questions);
+          setMsg($("genMsg"), "Reprise du quiz (nouvel ordre)", true);
+        } else {
+          $("progMsg").textContent = "Aucun quiz — générez-en d'abord.";
+        }
+      } catch (e) {
+        $("progMsg").textContent = e.message;
+      }
+    };
 
     refreshStatus();
   </script>

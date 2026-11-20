@@ -75,19 +75,22 @@ Reference UX: Apple **Aperçu / Preview** (iPhone / macOS) — rendered pages, s
 | `GET` | `/api/fiches` | — | List fiches |
 | `PUT` | `/api/fiches/{id}` | `{ "front","back" }` | Edit fiche |
 | `GET` | `/api/quiz` | — | Stored quiz |
+| `POST` | `/api/quiz/attempt` | `{ "score","total" }` | Record quiz attempt |
+| `POST` | `/api/pages/open` | `{ "page","total_pages?" }` | Mark page opened |
+| `GET` | `/api/progression` | — | Lecture / fiches / quiz aggregate |
 
 ## What works
 
 - PDF text extraction (`pdf-extract`) with clear failure for empty/scan PDFs
 - PDF.js page rendering + selectable text layer + selection→Sens menu
+- **Progression**: pages ouvertes (SQLite), fiches count, quiz attempts + last score, CTAs
 - `LlmClient` OpenAI-compatible: Groq → Ollama → stub
 - Glossary: LLM draft → Wiktionary + Wikipedia → reconcile → SQLite cache + sources badge
-- Generation of **either** fiches **or** quiz from extracted text
+- Generation of **either** fiches **or** quiz from extracted text; interactive quiz → score
 - Fiche edit persistence
 
 ## Still out of slice
 
-- Pages-opened reading metric / full progression screen
 - Async job queue / quota UX polish for 429s
 - Multi-course, audio, SRS, paid AI providers
 
