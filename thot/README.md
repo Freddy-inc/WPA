@@ -72,8 +72,9 @@ Reference UX: Apple **Aperçu / Preview** (iPhone / macOS) — rendered pages, s
 | `GET` | `/api/course/pdf` | — | Raw PDF for the viewer |
 | `POST` | `/api/glossary` | `{ "term" }` | L2→L1 + Wiktionary/Wikipedia + cache |
 | `POST` | `/api/generate` | `{ "kind":"fiches"\|"quiz" }` | One generation path |
-| `GET` | `/api/fiches` | — | List fiches |
-| `PUT` | `/api/fiches/{id}` | `{ "front","back" }` | Edit fiche |
+| `GET` | `/api/fiches` | — | List fiches (+ count) |
+| `GET` | `/api/fiches/{id}` | — | One fiche |
+| `PUT` | `/api/fiches/{id}` | `{ "front","back" }` | Edit recto/verso (marks edited) |
 | `GET` | `/api/quiz` | — | Stored quiz |
 | `POST` | `/api/quiz/attempt` | `{ "score","total" }` | Record quiz attempt |
 | `POST` | `/api/pages/open` | `{ "page","total_pages?" }` | Mark page opened |
@@ -86,8 +87,9 @@ Reference UX: Apple **Aperçu / Preview** (iPhone / macOS) — rendered pages, s
 - **Progression**: pages ouvertes (SQLite), fiches count, quiz attempts + last score, CTAs
 - `LlmClient` OpenAI-compatible: Groq → Ollama → stub
 - Glossary: LLM draft → Wiktionary + Wikipedia → reconcile → SQLite cache + sources badge
+- **Mes fiches**: empty state + CTAs, list with aperçu recto, edit recto/verso + save, revise (flip)
 - Generation of **either** fiches **or** quiz from extracted text; interactive quiz → score
-- Fiche edit persistence
+- Fiche edits persist and feed progression count
 
 ## Still out of slice
 

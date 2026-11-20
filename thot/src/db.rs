@@ -273,7 +273,22 @@ impl Db {
         Ok(rows)
     }
 
+    pub async fn get_fiche(&self, id: i64) -> Result<Option<FicheRow>> {
+        let row = sqlx::query_as::<_, FicheRow>(
+            "SELECT id, front, back, edited, created_at FROM fiches WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
     pub async fn update_fiche(&self, id: i64, front: &str, back: &str) -> Result<Option<FicheRow>> {
+        let front = front.trim();
+        let back = back.trim();
+        if front.is_empty() || back.is_empty() {
+            return Err(anyhow::anyhow!("recto et verso requis"));
+        }
         let res = sqlx::query("UPDATE fiches SET front = ?, back = ?, edited = 1 WHERE id = ?")
             .bind(front)
             .bind(back)
@@ -283,13 +298,7 @@ impl Db {
         if res.rows_affected() == 0 {
             return Ok(None);
         }
-        let row = sqlx::query_as::<_, FicheRow>(
-            "SELECT id, front, back, edited, created_at FROM fiches WHERE id = ?",
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await?;
-        Ok(row)
+        self.get_fiche(id).await
     }
 
     pub async fn save_quiz(&self, questions_json: &str) -> Result<QuizRow> {

@@ -100,8 +100,54 @@
     }
     .err { color: var(--bad); font-size: 0.9rem; margin-top: 0.5rem; }
     .okmsg { color: var(--ok); font-size: 0.9rem; margin-top: 0.5rem; }
-    .fiche { border-top: 1px solid var(--line); padding: 0.65rem 0; }
-    .fiche strong { display: block; }
+    .fiche-list { margin-top: 0.5rem; }
+    .fiche-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      width: 100%;
+      text-align: left;
+      padding: 0.75rem 0.2rem;
+      border: none;
+      border-top: 1px solid var(--line);
+      background: transparent;
+      color: var(--ink);
+      font: inherit;
+      cursor: pointer;
+    }
+    .fiche-row:hover { background: #f4f7f5; }
+    .fiche-row .preview { flex: 1; min-width: 0; }
+    .fiche-row .preview strong { display: block; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .fiche-row .preview .sub { font-size: 0.82rem; color: var(--muted); }
+    .fiche-row .chev { color: var(--muted); font-size: 1.1rem; }
+    .empty-state {
+      padding: 1rem 0.2rem;
+      color: var(--muted);
+    }
+    .empty-state p { margin: 0.35rem 0; }
+    .fiche-panel { margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--line); }
+    .fiche-panel label { margin-top: 0.55rem; }
+    .fiche-panel textarea {
+      width: 100%;
+      min-height: 4.5rem;
+      padding: 0.55rem 0.65rem;
+      border: 1px solid var(--line);
+      background: #fff;
+      font: inherit;
+      color: var(--ink);
+      resize: vertical;
+    }
+    .revise-card {
+      margin-top: 0.75rem;
+      padding: 1.25rem 1rem;
+      border: 1px solid var(--line);
+      background: #f7faf8;
+      min-height: 7rem;
+      cursor: pointer;
+    }
+    .revise-card .side { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+    .revise-card .body { margin-top: 0.45rem; font-size: 1.1rem; line-height: 1.4; }
     .quiz-q { border-top: 1px solid var(--line); padding: 0.7rem 0; }
     .quiz-q ul { margin: 0.35rem 0 0; padding-left: 1.1rem; list-style: none; }
     .quiz-q label { display: flex; gap: 0.45rem; align-items: flex-start; cursor: pointer; color: var(--ink); margin: 0.25rem 0; }
@@ -312,20 +358,68 @@
       <div id="pdfScroll"></div>
     </section>
 
-    <section id="generate">
-      <h2>3. Générer</h2>
-      <p class="meta">Un chemin de génération à la fois — fiches <em>ou</em> quiz depuis le texte extrait du PDF.</p>
+    <section id="fichesSection">
+      <h2>3. Mes fiches</h2>
+      <p class="meta" id="fichesCountLabel">Aucune fiche pour l’instant.</p>
       <div class="actions">
         <button type="button" id="fichesBtn">Générer fiches</button>
-        <button type="button" class="secondary" id="quizBtn">Générer quiz</button>
+        <button type="button" class="secondary" id="reviseBtn" hidden>Réviser</button>
+        <button type="button" class="ghost" id="fichesToPdf">Ouvrir le PDF</button>
+      </div>
+      <div id="fichesMsg"></div>
+
+      <div id="fichesListView">
+        <div id="fichesEmpty" class="empty-state" hidden>
+          <p><strong>Aucune fiche pour l’instant.</strong></p>
+          <p>Les fiches sont générées à partir de votre PDF.</p>
+          <div class="actions">
+            <button type="button" id="emptyGenBtn">Générer fiches</button>
+            <button type="button" class="secondary" id="emptyPdfBtn">Ouvrir le PDF</button>
+          </div>
+        </div>
+        <div id="fichesList" class="fiche-list"></div>
+      </div>
+
+      <div id="ficheEditView" class="fiche-panel" hidden>
+        <div class="actions" style="margin-top:0">
+          <button type="button" class="ghost" id="ficheBack">← Fiches</button>
+          <button type="button" id="ficheSave">Sauver</button>
+        </div>
+        <label for="ficheFront">Recto</label>
+        <textarea id="ficheFront" rows="3"></textarea>
+        <label for="ficheBack">Verso</label>
+        <textarea id="ficheBack" rows="4"></textarea>
+        <p class="meta" id="ficheOrigin">Origine : auto</p>
+        <div id="ficheSaveMsg"></div>
+      </div>
+
+      <div id="ficheReviseView" class="fiche-panel" hidden>
+        <div class="actions" style="margin-top:0">
+          <button type="button" class="ghost" id="reviseBack">← Fiches</button>
+          <button type="button" class="secondary" id="revisePrev">Préc.</button>
+          <button type="button" class="secondary" id="reviseNext">Suiv.</button>
+        </div>
+        <p class="meta" id="revisePos"></p>
+        <div class="revise-card" id="reviseCard" title="Toucher pour retourner">
+          <div class="side" id="reviseSide">Recto</div>
+          <div class="body" id="reviseBody"></div>
+        </div>
+        <p class="meta">Touchez la carte pour basculer recto / verso.</p>
+      </div>
+    </section>
+
+    <section id="generate">
+      <h2>4. Quiz</h2>
+      <p class="meta">Questions tirées du PDF · ordre aléatoire à chaque tentative.</p>
+      <div class="actions">
+        <button type="button" id="quizBtn">Générer / lancer le quiz</button>
       </div>
       <div id="genMsg"></div>
-      <div id="fichesOut"></div>
       <div id="quizOut"></div>
     </section>
 
     <section id="progression">
-      <h2>4. Progression</h2>
+      <h2>5. Progression</h2>
       <div class="prog-block">
         <h3>Lecture</h3>
         <div class="value" id="progPages">Pages ouvertes : 0 / 0</div>
@@ -373,6 +467,10 @@
     let quizQuestions = [];
     let quizIndex = 0;
     let quizAnswers = [];
+    let fichesCache = [];
+    let editingFicheId = null;
+    let reviseIndex = 0;
+    let reviseFlipped = false;
 
     async function api(path, opts = {}) {
       const res = await fetch(path, opts);
@@ -413,6 +511,7 @@
           await openPdf("/api/course/pdf", s.course.filename);
         }
         renderProgression(s.progression);
+        await loadFichesList();
       } catch (e) {
         $("provider").textContent = "API indisponible";
       }
@@ -668,33 +767,197 @@
       }
     };
 
-    async function generate(kind) {
+    function showFichesList() {
+      $("fichesListView").hidden = false;
+      $("ficheEditView").hidden = true;
+      $("ficheReviseView").hidden = true;
+      editingFicheId = null;
+    }
+
+    function renderFichesList() {
+      const list = $("fichesList");
+      const empty = $("fichesEmpty");
+      const n = fichesCache.length;
+      $("fichesCountLabel").textContent = n
+        ? `${n} fiche${n > 1 ? "s" : ""} · générées depuis le cours`
+        : "Aucune fiche pour l’instant.";
+      $("reviseBtn").hidden = n === 0;
+      if (!n) {
+        empty.hidden = false;
+        list.innerHTML = "";
+        return;
+      }
+      empty.hidden = true;
+      list.innerHTML = fichesCache.map((f) => {
+        const mark = f.edited ? "modifiée" : "auto";
+        return `<button type="button" class="fiche-row" data-id="${f.id}">
+          <span class="preview">
+            <strong>${escapeHtml(f.front)}</strong>
+            <span class="sub">Origine : ${mark}</span>
+          </span>
+          <span class="chev">›</span>
+        </button>`;
+      }).join("");
+      list.querySelectorAll(".fiche-row").forEach((btn) => {
+        btn.onclick = () => openFicheEditor(Number(btn.dataset.id));
+      });
+    }
+
+    async function loadFichesList() {
+      try {
+        const data = await api("/api/fiches");
+        fichesCache = data.fiches || [];
+        renderFichesList();
+        await refreshProgression();
+      } catch (e) {
+        setMsg($("fichesMsg"), e.message, false);
+      }
+    }
+
+    async function openFicheEditor(id) {
+      try {
+        const data = await api(`/api/fiches/${id}`);
+        const f = data.fiche;
+        editingFicheId = f.id;
+        $("ficheFront").value = f.front;
+        $("ficheBack").value = f.back;
+        $("ficheOrigin").textContent = f.edited
+          ? "Origine : auto · modifiée par vous"
+          : "Origine : auto";
+        setMsg($("ficheSaveMsg"), "", true);
+        $("fichesListView").hidden = true;
+        $("ficheReviseView").hidden = true;
+        $("ficheEditView").hidden = false;
+        $("ficheEditView").scrollIntoView({ behavior: "smooth", block: "nearest" });
+      } catch (e) {
+        setMsg($("fichesMsg"), e.message, false);
+      }
+    }
+
+    $("ficheBack").onclick = () => {
+      showFichesList();
+      renderFichesList();
+    };
+
+    $("ficheSave").onclick = async () => {
+      if (!editingFicheId) return;
+      $("ficheSave").disabled = true;
+      try {
+        const res = await api(`/api/fiches/${editingFicheId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            front: $("ficheFront").value,
+            back: $("ficheBack").value,
+          }),
+        });
+        const f = res.fiche;
+        fichesCache = fichesCache.map((x) => (x.id === f.id ? f : x));
+        $("ficheOrigin").textContent = "Origine : auto · modifiée par vous";
+        setMsg($("ficheSaveMsg"), "Fiche enregistrée", true);
+        if (res.progression) renderProgression(res.progression);
+        else await refreshProgression();
+      } catch (e) {
+        setMsg($("ficheSaveMsg"), e.message, false);
+      } finally {
+        $("ficheSave").disabled = false;
+      }
+    };
+
+    function openRevise() {
+      if (!fichesCache.length) return;
+      reviseIndex = 0;
+      reviseFlipped = false;
+      $("fichesListView").hidden = true;
+      $("ficheEditView").hidden = true;
+      $("ficheReviseView").hidden = false;
+      paintReviseCard();
+      $("ficheReviseView").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+
+    function paintReviseCard() {
+      const f = fichesCache[reviseIndex];
+      if (!f) return;
+      $("revisePos").textContent = `Fiche ${reviseIndex + 1} / ${fichesCache.length}`;
+      $("reviseSide").textContent = reviseFlipped ? "Verso" : "Recto";
+      $("reviseBody").textContent = reviseFlipped ? f.back : f.front;
+    }
+
+    $("reviseCard").onclick = () => {
+      reviseFlipped = !reviseFlipped;
+      paintReviseCard();
+    };
+    $("reviseBack").onclick = () => {
+      showFichesList();
+      renderFichesList();
+    };
+    $("revisePrev").onclick = () => {
+      if (reviseIndex <= 0) return;
+      reviseIndex -= 1;
+      reviseFlipped = false;
+      paintReviseCard();
+    };
+    $("reviseNext").onclick = () => {
+      if (reviseIndex >= fichesCache.length - 1) return;
+      reviseIndex += 1;
+      reviseFlipped = false;
+      paintReviseCard();
+    };
+    $("reviseBtn").onclick = openRevise;
+
+    function scrollToPdf() {
+      if ($("readerSection").classList.contains("visible")) {
+        $("readerSection").scrollIntoView({ behavior: "smooth", block: "start" });
+      } else {
+        $("import").scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }
+    $("fichesToPdf").onclick = scrollToPdf;
+    $("emptyPdfBtn").onclick = scrollToPdf;
+
+    async function generateFiches() {
+      if (fichesCache.length) {
+        const ok = window.confirm(
+          "Régénérer remplace les fiches existantes (y compris vos edits). Continuer ?"
+        );
+        if (!ok) return;
+      }
       $("fichesBtn").disabled = true;
-      $("quizBtn").disabled = true;
-      setMsg($("genMsg"), `Génération ${kind}…`, true);
+      $("emptyGenBtn").disabled = true;
+      setMsg($("fichesMsg"), "Génération des fiches…", true);
+      showFichesList();
       try {
         const data = await api("/api/generate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ kind }),
+          body: JSON.stringify({ kind: "fiches" }),
         });
-        if (data.kind === "fiches") {
-          $("quizOut").innerHTML = "";
-          $("fichesOut").innerHTML = (data.fiches || [])
-            .map((f) => `<div class="fiche"><strong>${escapeHtml(f.front)}</strong><span>${escapeHtml(f.back)}</span></div>`)
-            .join("");
-          setMsg($("genMsg"), `${data.fiches.length} fiches générées`, true);
-          await refreshProgression();
-          $("progression").scrollIntoView({ behavior: "smooth", block: "nearest" });
-        } else {
-          $("fichesOut").innerHTML = "";
-          startQuiz(data.questions || []);
-          setMsg($("genMsg"), `${data.count} questions — répondez pour enregistrer le score`, true);
-        }
+        fichesCache = data.fiches || [];
+        renderFichesList();
+        setMsg($("fichesMsg"), `${fichesCache.length} fiches générées`, true);
+        await refreshProgression();
+      } catch (e) {
+        setMsg($("fichesMsg"), e.message, false);
+      } finally {
+        $("fichesBtn").disabled = false;
+        $("emptyGenBtn").disabled = false;
+      }
+    }
+
+    async function generateQuiz() {
+      $("quizBtn").disabled = true;
+      setMsg($("genMsg"), "Génération du quiz…", true);
+      try {
+        const data = await api("/api/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ kind: "quiz" }),
+        });
+        startQuiz(data.questions || []);
+        setMsg($("genMsg"), `${data.count} questions — répondez pour enregistrer le score`, true);
       } catch (e) {
         setMsg($("genMsg"), e.message, false);
       } finally {
-        $("fichesBtn").disabled = false;
         $("quizBtn").disabled = false;
       }
     }
@@ -781,8 +1044,9 @@
       $("progression").scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
 
-    $("fichesBtn").onclick = () => generate("fiches");
-    $("quizBtn").onclick = () => generate("quiz");
+    $("fichesBtn").onclick = () => generateFiches();
+    $("emptyGenBtn").onclick = () => generateFiches();
+    $("quizBtn").onclick = () => generateQuiz();
 
     $("ctaReread").onclick = () => {
       if ($("readerSection").classList.contains("visible")) {
@@ -793,20 +1057,11 @@
       }
     };
     $("ctaFiches").onclick = async () => {
-      $("generate").scrollIntoView({ behavior: "smooth", block: "start" });
-      try {
-        const data = await api("/api/fiches");
-        if ((data.fiches || []).length) {
-          $("fichesOut").innerHTML = data.fiches
-            .map((f) => `<div class="fiche"><strong>${escapeHtml(f.front)}</strong><span>${escapeHtml(f.back)}</span></div>`)
-            .join("");
-          $("quizOut").innerHTML = "";
-        } else {
-          $("progMsg").textContent = "Aucune fiche — générez-en depuis le cours.";
-        }
-      } catch (e) {
-        $("progMsg").textContent = e.message;
-      }
+      $("fichesSection").scrollIntoView({ behavior: "smooth", block: "start" });
+      await loadFichesList();
+      showFichesList();
+      if (fichesCache.length) openRevise();
+      else $("progMsg").textContent = "Aucune fiche — générez-en depuis le cours.";
     };
     $("ctaQuiz").onclick = async () => {
       $("generate").scrollIntoView({ behavior: "smooth", block: "start" });

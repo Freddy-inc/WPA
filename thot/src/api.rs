@@ -38,7 +38,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/glossary", post(define_glossary))
         .route("/api/generate", post(generate_content))
         .route("/api/fiches", get(list_fiches))
-        .route("/api/fiches/{id}", put(update_fiche))
+        .route("/api/fiches/{id}", get(get_fiche).put(update_fiche))
         .route("/api/quiz", get(get_quiz))
         .route("/api/quiz/attempt", post(quiz_attempt))
         .route("/api/pages/open", post(open_page))
@@ -259,7 +259,23 @@ async fn list_fiches(
     State(st): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let fiches = st.db.list_fiches().await.map_err(ApiError::from)?;
-    Ok(Json(json!({ "fiches": fiches })))
+    Ok(Json(json!({
+        "fiches": fiches,
+        "count": fiches.len(),
+    })))
+}
+
+async fn get_fiche(
+    State(st): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let row = st
+        .db
+        .get_fiche(id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError::not_found("fiche introuvable"))?;
+    Ok(Json(json!({ "fiche": row })))
 }
 
 #[derive(Deserialize)]
@@ -275,11 +291,12 @@ async fn update_fiche(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let row = st
         .db
-        .update_fiche(id, body.front.trim(), body.back.trim())
+        .update_fiche(id, &body.front, &body.back)
         .await
-        .map_err(ApiError::from)?
+        .map_err(|e| ApiError::bad(e.to_string()))?
         .ok_or_else(|| ApiError::not_found("fiche introuvable"))?;
-    Ok(Json(json!({ "fiche": row })))
+    let snap = st.db.progression_snapshot().await.map_err(ApiError::from)?;
+    Ok(Json(json!({ "fiche": row, "progression": snap })))
 }
 
 async fn get_quiz(State(st): State<Arc<AppState>>) -> Result<Json<serde_json::Value>, ApiError> {
