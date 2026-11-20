@@ -365,6 +365,31 @@ fn stub_response(system: &str, user: &str) -> String {
         .to_string();
     }
 
+    // Phrase sense (multi-word selection)
+    if blob.contains("whole selection") || blob.contains("phrase_sense_l1") || blob.contains("\"phrase_l2\"")
+    {
+        let phrase = extract_phrase_hint(user).unwrap_or_else(|| "phrase".into());
+        let words: Vec<Value> = phrase
+            .split_whitespace()
+            .take(5)
+            .map(|w| {
+                json!({
+                    "term_l2": w.trim_matches(|c: char| !c.is_alphanumeric()),
+                    "meaning_l1": format!("[STUB] gloss de « {w} »")
+                })
+            })
+            .collect();
+        return json!({
+            "phrase_l2": phrase,
+            "phrase_sense_l1": format!(
+                "[STUB] Sens de la phrase « {phrase} » en L1, tenu par le contexte du cours (démo sans LLM distant)."
+            ),
+            "words": words,
+            "confidence": 0.55
+        })
+        .to_string();
+    }
+
     // Glossary draft / reconcile
     let term = extract_term_hint(user).unwrap_or_else(|| "term".into());
     json!({
@@ -380,6 +405,18 @@ fn stub_response(system: &str, user: &str) -> String {
 
 fn extract_term_hint(user: &str) -> Option<String> {
     if let Ok(v) = serde_json::from_str::<Value>(user) {
+        if let Some(t) = v.get("term_l2").and_then(|x| x.as_str()) {
+            return Some(t.to_string());
+        }
+    }
+    None
+}
+
+fn extract_phrase_hint(user: &str) -> Option<String> {
+    if let Ok(v) = serde_json::from_str::<Value>(user) {
+        if let Some(t) = v.get("phrase_l2").and_then(|x| x.as_str()) {
+            return Some(t.to_string());
+        }
         if let Some(t) = v.get("term_l2").and_then(|x| x.as_str()) {
             return Some(t.to_string());
         }

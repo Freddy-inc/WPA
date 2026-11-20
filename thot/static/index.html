@@ -384,7 +384,9 @@
       position: fixed;
       z-index: 50;
       min-width: 220px;
-      max-width: min(340px, calc(100vw - 24px));
+      max-width: min(420px, calc(100vw - 24px));
+      max-height: min(70vh, 520px);
+      overflow: auto;
       background: #1f2430;
       color: #f5f7fb;
       border-radius: 12px;
@@ -404,6 +406,38 @@
       line-height: 1.35;
       margin-bottom: 0.55rem;
       min-height: 1.2em;
+    }
+    #selMenu .phrase-sense {
+      margin-bottom: 0.45rem;
+    }
+    #selMenu .phrase-label,
+    #selMenu .words-label {
+      font-size: 0.72rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      opacity: 0.7;
+      margin: 0.35rem 0 0.2rem;
+    }
+    #selMenu .word-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      gap: 0.35rem;
+    }
+    #selMenu .word-list li {
+      background: rgba(255,255,255,0.06);
+      border-radius: 8px;
+      padding: 0.35rem 0.45rem;
+    }
+    #selMenu .word-list .w-term {
+      font-weight: 600;
+      font-size: 0.82rem;
+      color: #9fd6b8;
+    }
+    #selMenu .word-list .w-mean {
+      font-size: 0.86rem;
+      opacity: 0.95;
     }
     #selMenu .sel-actions {
       display: flex;
@@ -532,7 +566,7 @@
           <button type="button" id="nextPage" aria-label="Page suivante">›</button>
         </div>
       </div>
-      <div class="viewer-hint">Sélectionnez un mot ou une expression dans le PDF — le menu propose le <strong>sens</strong> (L1), Copier, Fermer.</div>
+      <div class="viewer-hint">Sélectionnez un mot ou une <strong>phrase</strong> dans le PDF — Sens donne le sens L1 (phrase entière + mots), Copier, Fermer.</div>
       <div id="pdfScroll"></div>
     </section>
 
@@ -1124,12 +1158,16 @@
       if (!inViewer) return;
       const term = sel.toString().replace(/\s+/g, " ").trim();
       if (!term) return;
-      if (term.split(/\s+/).length > 8) {
+      const n = term.split(/\s+/).length;
+      if (n > 40) {
         showMenuNearSelection(term);
-        $("selBody").textContent = "Sélection trop large — resserrez sur un mot ou une expression courte.";
+        $("selBody").textContent = "Sélection trop large — resserrez sur une phrase (max 40 mots).";
         return;
       }
       showMenuNearSelection(term);
+      if (n >= 2) {
+        $("selBody").textContent = "Sens : sens de la phrase (L1) + aide par mot.";
+      }
     }
 
     document.addEventListener("mouseup", () => setTimeout(onSelectionMaybe, 10));
@@ -1150,32 +1188,60 @@
         $("selBody").textContent = t;
       }
     };
-    $("selSense").onclick = async () => {
-      const term = (lastSelection || "").trim();
-      if (!term) return;
-      if (term.split(/\s+/).length > 8) {
-        $("selBody").textContent = "Resserrez la sélection avant de demander le sens.";
-        return;
-      }
-      $("selSense").disabled = true;
-      $("selBody").textContent = "Recherche du sens…";
-      try {
-        const g = await api("/api/glossary", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ term }),
-        });
-        const badgeClass = g.verified ? "ok" : "warn";
-        const sources = (g.sources || [])
-          .map((s) => `<li><a href="${s.url}" target="_blank" rel="noopener">${escapeHtml(s.kind)}: ${escapeHtml(s.title)}</a></li>`)
-          .join("");
-        $("selTerm").textContent = `L2 · ${g.term_l2}`;
+    function renderGlossaryResult(g) {
+      const badgeClass = g.verified ? "ok" : "warn";
+      const sources = (g.sources || [])
+        .map((s) => `<li><a href="${s.url}" target="_blank" rel="noopener">${escapeHtml(s.kind)}: ${escapeHtml(s.title)}</a></li>`)
+        .join("");
+      const isPhrase = g.kind === "phrase" || (g.phrase_sense_l1 && (g.words || []).length);
+      const phraseSense = g.phrase_sense_l1 || g.meaning_l1 || "";
+      const words = Array.isArray(g.words) ? g.words : [];
+      const wordsHtml = words.length
+        ? `<div class="words-label">Mots</div><ul class="word-list">${words
+            .map(
+              (w) =>
+                `<li><div class="w-term">${escapeHtml(w.term_l2)}</div><div class="w-mean">${escapeHtml(w.meaning_l1)}</div></li>`
+            )
+            .join("")}</ul>`
+        : "";
+      $("selTerm").textContent = isPhrase ? `Phrase L2 · ${g.term_l2}` : `L2 · ${g.term_l2}`;
+      if (isPhrase) {
+        $("selBody").innerHTML = `
+          <div class="phrase-label">Sens de la phrase (L1)</div>
+          <div class="phrase-sense">${escapeHtml(phraseSense)}</div>
+          ${wordsHtml}
+          <span class="badge ${badgeClass}">${escapeHtml(g.badge || "Sens de la phrase")}</span>
+          ${sources ? `<ul class="sources">${sources}</ul>` : ""}
+          <div class="meta" style="color:#b8c0d0">${g.cached ? "cache" : "nouveau"}</div>
+        `;
+      } else {
         $("selBody").innerHTML = `
           <div>${escapeHtml(g.meaning_l1)}</div>
           <span class="badge ${badgeClass}">${escapeHtml(g.badge)}</span>
           ${sources ? `<ul class="sources">${sources}</ul>` : ""}
           <div class="meta" style="color:#b8c0d0">${g.cached ? "cache" : "nouveau"}</div>
         `;
+      }
+    }
+
+    $("selSense").onclick = async () => {
+      const term = (lastSelection || "").trim();
+      if (!term) return;
+      if (term.split(/\s+/).length > 40) {
+        $("selBody").textContent = "Resserrez la sélection (max 40 mots).";
+        return;
+      }
+      $("selSense").disabled = true;
+      $("selBody").textContent = term.split(/\s+/).length >= 2
+        ? "Sens de la phrase + mots…"
+        : "Recherche du sens…";
+      try {
+        const g = await api("/api/glossary", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ term }),
+        });
+        renderGlossaryResult(g);
       } catch (e) {
         $("selBody").textContent = e.message;
       } finally {

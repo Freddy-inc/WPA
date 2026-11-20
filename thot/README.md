@@ -75,7 +75,9 @@ Reference UX: Apple **Aperçu / Preview** (iPhone / macOS) — rendered pages, s
 
 - Pages rendered with **PDF.js** (canvas) + **text layer** (selectable)
 - PDF bytes stored at `data/docs/{id}.pdf` (active also mirrored to `course.pdf` for legacy)
-- On text selection: floating menu with primary action **Sens** (glossary L1), plus Copier / Fermer
+- On text selection: floating menu with primary action **Sens** (L1), plus Copier / Fermer
+  - **Single word**: glossary L1 + Wiktionary/Wikipedia verify (unchanged)
+  - **Phrase / sentence** (2–40 words): whole-phrase sense in **L1** using course/PDF context, **plus** per-word help for content terms
 
 ### Gaps vs full Aperçu / Preview
 
@@ -104,7 +106,7 @@ Reference UX: Apple **Aperçu / Preview** (iPhone / macOS) — rendered pages, s
 | `DELETE` | `/api/documents/{id}` | — | Remove one document |
 | `GET` | `/api/documents/{id}/pdf` | — | Raw PDF for that document |
 | `GET` | `/api/course/pdf` | — | Active document PDF (compat) |
-| `POST` | `/api/glossary` | `{ "term" }` | L2→L1 + Wiktionary/Wikipedia + cache |
+| `POST` | `/api/glossary` | `{ "term" }` | Word: L2→L1 + web verify. Phrase (2+ words): `kind:"phrase"`, `phrase_sense_l1`, `words[]` + cache |
 | `POST` | `/api/generate` | `{ "kind":"fiches"\|"quiz" }` | One generation path (full corpus) |
 | `GET` | `/api/fiches` | — | List fiches (+ count) |
 | `GET` | `/api/fiches/{id}` | — | One fiche |
@@ -124,6 +126,7 @@ Reference UX: Apple **Aperçu / Preview** (iPhone / macOS) — rendered pages, s
 - **Progression**: pages ouvertes per document + total, fiches count, quiz attempts + last score, CTAs
 - `LlmClient` OpenAI-compatible: Groq → Ollama → stub
 - Glossary: LLM draft → Wiktionary + Wikipedia → reconcile → SQLite cache + sources badge
+- Phrase Sens: whole-selection L1 sense (course-aware) + word-level helps; respects effective L1/L2 (global or course override)
 - **Mes fiches**: empty state + CTAs, list with aperçu recto, edit recto/verso + save, revise (flip)
 - **Quiz**: launch screen, blocked if insufficient material, Q one-by-one + Quit, results + feedback, replay; last score on progression
 - Fiche edits persist and feed progression count
