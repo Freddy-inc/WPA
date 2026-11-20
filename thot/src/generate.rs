@@ -1,4 +1,5 @@
 //! One generation path: auto fiches OR quiz from extracted course text.
+//! Post-quiz remédiation appends targeted fiches for missed notions.
 
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
@@ -14,6 +15,18 @@ pub struct QuizQuestion {
     pub choices: Vec<String>,
     pub answer_index: usize,
     pub notion: String,
+}
+
+/// One missed quiz item used to build remédiation fiches.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuizMiss {
+    pub question: String,
+    #[serde(default)]
+    pub notion: String,
+    #[serde(default)]
+    pub correct_answer: String,
+    #[serde(default)]
+    pub chosen_answer: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -54,22 +67,23 @@ pub async fn generate(
     })?;
     let l1 = l1.as_str();
     let l2 = l2.as_str();
-    // Keep chunks short for free-tier TPM; use more text for quiz coverage.
+    // Keep chunks short for free-tier TPM; use more text for quiz / fiche coverage.
     let chunks = chunk_text(&course.text, 2500);
-    let material = if kind == "quiz" {
-        chunks
-            .iter()
-            .take(3)
-            .cloned()
-            .collect::<Vec<_>>()
-            .join("\n\n")
+    let material = chunks
+        .iter()
+        .take(if kind == "quiz" { 3 } else { 2 })
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let material = if material.is_empty() {
+        course.text.clone()
     } else {
-        chunks.first().cloned().unwrap_or(course.text.clone())
+        material
     };
 
     match kind {
         "fiches" | "flashcards" => {
-            let fiches = generate_fiches(llm, &material, l1, l2).await?;
+            let fiches = generate_fiches(llm, &course.title, &material, l1, l2).await?;
             let rows = db.replace_fiches(&fiches).await?;
             Ok(GenerationResult::Fiches { fiches: rows })
         }
@@ -79,7 +93,7 @@ pub async fn generate(
                     "Quiz indisponible : matériel insuffisant pour générer des questions"
                 ));
             }
-            let questions = generate_quiz(llm, &material, l1, l2).await?;
+            let questions = generate_quiz(llm, &course.title, &material, l1, l2).await?;
             if questions.len() < MIN_QUIZ_QUESTIONS {
                 return Err(anyhow!(
                     "Quiz indisponible : matériel insuffisant pour générer des questions"
@@ -94,20 +108,63 @@ pub async fn generate(
     }
 }
 
+/// After a quiz: for each miss, generate a remédiation fiche that re-explains
+/// that part of the course (appended to Mes fiches — does not wipe existing cards).
+pub async fn remediate_misses(
+    db: &Db,
+    llm: &LlmClient,
+    misses: &[QuizMiss],
+) -> Result<Vec<FicheRow>> {
+    if misses.is_empty() {
+        return Ok(vec![]);
+    }
+    let course = db
+        .get_course()
+        .await?
+        .ok_or_else(|| anyhow!("Aucun cours — importez un PDF d'abord"))?;
+    if course.text.trim().is_empty() {
+        return Err(anyhow!("Matériel insuffisant pour la remédiation"));
+    }
+    let (l1, l2, _) = db.effective_languages_for(&course).await.map_err(|e| anyhow!("{e}"))?;
+    let chunks = chunk_text(&course.text, 2500);
+    let material = chunks
+        .iter()
+        .take(3)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let material = if material.is_empty() {
+        course.text.clone()
+    } else {
+        material
+    };
+
+    let pairs = generate_remediation_fiches(llm, &course.title, &material, misses, &l1, &l2).await?;
+    db.append_fiches(&pairs).await
+}
+
 async fn generate_fiches(
     llm: &LlmClient,
+    course_title: &str,
     material: &str,
     l1: &str,
     l2: &str,
 ) -> Result<Vec<(String, String)>> {
     let system = format!(
-        "You create study flashcards from course text. \
-         Student L1={l1}, course language L2={l2}. \
+        "You are an AI study coach. Create flashcards from THIS course PDF excerpt only. \
+         Student mother tongue L1={l1}; course language L2={l2}. \
          Return JSON only: {{\"fiches\":[{{\"front\":\"...\",\"back\":\"...\"}}]}}. \
-         Produce 5 to 8 cards. Front = key term or prompt (L2 ok); back = concise explanation in L1. \
-         Stay faithful to the provided text; do not invent unrelated facts."
+         Produce 5 to 8 cards covering the main notions. \
+         Front = key term or short prompt (L2 ok); back = clear explanation in L1 (2–4 sentences). \
+         Stay faithful to the excerpt; no unrelated trivia."
     );
-    let user = json!({ "course_excerpt": material }).to_string();
+    let user = json!({
+        "course_title": course_title,
+        "course_excerpt": material,
+        "l1": l1,
+        "l2": l2,
+    })
+    .to_string();
     let v = llm.chat_json(ModelRole::Batch, &system, &user).await?;
     let arr = v
         .get("fiches")
@@ -138,18 +195,26 @@ async fn generate_fiches(
 
 async fn generate_quiz(
     llm: &LlmClient,
+    course_title: &str,
     material: &str,
     l1: &str,
     l2: &str,
 ) -> Result<Vec<QuizQuestion>> {
     let system = format!(
-        "You create a multiple-choice quiz from course text. \
+        "You are an AI study coach. Create a multiple-choice quiz from THIS course PDF excerpt only. \
          Student L1={l1}, course language L2={l2}. \
          Return JSON only: {{\"questions\":[{{\"question\":\"...\",\"choices\":[\"A\",\"B\",\"C\",\"D\"],\"answer_index\":0,\"notion\":\"...\"}}]}}. \
-         Produce 6 to 10 questions covering as much of the excerpt as possible (full-course coverage intent). \
-         answer_index is 0-based. Questions may be in L2; stay anchored to the excerpt; no generic trivia."
+         Produce 6 to 10 questions covering as much of the excerpt as possible. \
+         answer_index is 0-based. Questions may be in L2; notion = short topic label. \
+         Stay anchored to the excerpt; no generic trivia."
     );
-    let user = json!({ "course_excerpt": material }).to_string();
+    let user = json!({
+        "course_title": course_title,
+        "course_excerpt": material,
+        "l1": l1,
+        "l2": l2,
+    })
+    .to_string();
     let v = llm.chat_json(ModelRole::Batch, &system, &user).await?;
     let arr = v
         .get("questions")
@@ -193,6 +258,90 @@ async fn generate_quiz(
             answer_index,
             notion,
         });
+    }
+    Ok(out)
+}
+
+async fn generate_remediation_fiches(
+    llm: &LlmClient,
+    course_title: &str,
+    material: &str,
+    misses: &[QuizMiss],
+    l1: &str,
+    l2: &str,
+) -> Result<Vec<(String, String)>> {
+    let system = format!(
+        "You are an AI remédiation coach. The student missed quiz items. \
+         For EACH miss, create ONE flashcard that re-explains that part of the course \
+         so they understand why the correct answer is right. \
+         Student L1={l1}; course language L2={l2}. \
+         Return JSON only: {{\"fiches\":[{{\"front\":\"...\",\"back\":\"...\",\"notion\":\"...\"}}]}}. \
+         Front = short L1 or L2 prompt about the missed notion (prefix is added by the app). \
+         Back = clear remédiation in L1 (3–5 sentences), grounded in course_excerpt. \
+         One fiche per miss; do not invent facts outside the excerpt."
+    );
+    let user = json!({
+        "course_title": course_title,
+        "course_excerpt": material,
+        "misses": misses,
+        "l1": l1,
+        "l2": l2,
+    })
+    .to_string();
+    let v = llm.chat_json(ModelRole::Batch, &system, &user).await?;
+    let arr = v
+        .get("fiches")
+        .and_then(|a| a.as_array())
+        .ok_or_else(|| anyhow!("réponse remédiation invalide"))?;
+
+    let mut out = Vec::new();
+    for (i, item) in arr.iter().enumerate() {
+        let mut front = item
+            .get("front")
+            .and_then(|s| s.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let back = item
+            .get("back")
+            .and_then(|s| s.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if front.is_empty() {
+            let notion = item
+                .get("notion")
+                .and_then(|s| s.as_str())
+                .or_else(|| misses.get(i).map(|m| m.notion.as_str()))
+                .unwrap_or("notion");
+            front = format!("Revoir : {notion}");
+        }
+        if back.is_empty() {
+            continue;
+        }
+        if !front.starts_with("[Remédiation]") {
+            front = format!("[Remédiation] {front}");
+        }
+        out.push((front, back));
+    }
+
+    // Fallback: one card per miss if the model under-delivered.
+    if out.is_empty() {
+        for m in misses {
+            let notion = if m.notion.trim().is_empty() {
+                "point du cours"
+            } else {
+                m.notion.trim()
+            };
+            out.push((
+                format!("[Remédiation] {notion}"),
+                format!(
+                    "Vous avez manqué : {}. La bonne réponse était « {} » (vous aviez choisi « {} »). \
+                     Relisez ce passage du cours et reformulez l’idée dans votre L1.",
+                    m.question, m.correct_answer, m.chosen_answer
+                ),
+            ));
+        }
     }
     Ok(out)
 }

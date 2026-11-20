@@ -273,6 +273,47 @@
     .quiz-q { border-top: 1px solid var(--line); padding: 0.7rem 0; }
     .quiz-q ul { margin: 0.35rem 0 0; padding-left: 1.1rem; list-style: none; }
     .quiz-q label { display: flex; gap: 0.45rem; align-items: flex-start; cursor: pointer; color: var(--ink); margin: 0.25rem 0; }
+    .quiz-miss {
+      margin-top: 0.55rem;
+      padding: 0.65rem 0.7rem;
+      border: 1px solid #f0c9c4;
+      background: #fff7f6;
+    }
+    .quiz-miss.ok {
+      border-color: #c5e3d2;
+      background: #f4fbf7;
+    }
+    .quiz-miss .tag {
+      display: inline-block;
+      font-size: 0.72rem;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      margin-bottom: 0.25rem;
+      color: var(--muted);
+    }
+    .remediation-box {
+      margin-top: 0.85rem;
+      padding: 0.85rem 0.75rem;
+      border: 1px solid var(--line);
+      background: #f7faf8;
+    }
+    .remediation-box h4 {
+      margin: 0 0 0.45rem;
+      font-family: var(--font-display);
+      font-size: 1.05rem;
+    }
+    .fiche-row .remed-badge {
+      display: inline-block;
+      margin-left: 0.35rem;
+      font-size: 0.68rem;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      color: #8a5a2b;
+      background: #f3e6d4;
+      padding: 0.1rem 0.35rem;
+      border-radius: 4px;
+      vertical-align: middle;
+    }
     .prog-block {
       border-top: 1px solid var(--line);
       padding: 0.85rem 0;
@@ -1271,10 +1312,15 @@
       }
       empty.hidden = true;
       list.innerHTML = fichesCache.map((f) => {
-        const mark = f.edited ? "modifiée" : "auto";
+        const isRemed = String(f.front || "").startsWith("[Remédiation]");
+        const title = isRemed
+          ? String(f.front).replace(/^\[Remédiation\]\s*/, "")
+          : f.front;
+        const mark = isRemed ? "remédiation quiz" : f.edited ? "modifiée" : "auto";
+        const badge = isRemed ? `<span class="remed-badge">Remédiation</span>` : "";
         return `<button type="button" class="fiche-row" data-id="${f.id}">
           <span class="preview">
-            <strong>${escapeHtml(f.front)}</strong>
+            <strong>${escapeHtml(title)}${badge}</strong>
             <span class="sub">Origine : ${mark}</span>
           </span>
           <span class="chev">›</span>
@@ -1569,19 +1615,44 @@
 
     async function finishQuiz() {
       let score = 0;
+      const misses = [];
       quizQuestions.forEach((q, i) => {
-        if (quizAnswers[i] === q.answer_index) score += 1;
+        const chosen = quizAnswers[i];
+        const ok = chosen === q.answer_index;
+        if (ok) score += 1;
+        else {
+          misses.push({
+            question: q.question,
+            notion: q.notion || "",
+            correct_answer: q.choices[q.answer_index] || "",
+            chosen_answer: q.choices[chosen] || "",
+          });
+        }
       });
       const total = quizQuestions.length;
       const feedback = quizQuestions.map((q, i) => {
         const ok = quizAnswers[i] === q.answer_index;
-        return `<div class="meta">${ok ? "✓" : "✗"} Q${i + 1} — ${escapeHtml(q.notion || "notion")}</div>`;
+        const chosen = q.choices[quizAnswers[i]] || "—";
+        const correct = q.choices[q.answer_index] || "—";
+        if (ok) {
+          return `<div class="quiz-miss ok"><div class="tag">✓ Correct · ${escapeHtml(q.notion || "notion")}</div>
+            <div>${escapeHtml(q.question)}</div></div>`;
+        }
+        return `<div class="quiz-miss"><div class="tag">✗ À revoir · ${escapeHtml(q.notion || "notion")}</div>
+          <div>${escapeHtml(q.question)}</div>
+          <div class="meta">Votre réponse : ${escapeHtml(chosen)}</div>
+          <div class="meta">Bonne réponse : ${escapeHtml(correct)}</div></div>`;
       }).join("");
       $("quizOut").innerHTML = `
         <div class="quiz-q">
           <h3 style="font-family:var(--font-display);margin:0 0 0.5rem">Résultat</h3>
           <div class="value" style="font-size:1.25rem;font-weight:600">Score : ${score} / ${total}</div>
           <div style="margin-top:0.75rem">${feedback}</div>
+          <div id="remediationPanel" class="remediation-box" ${misses.length ? "" : "hidden"}>
+            <h4>Remédiation</h4>
+            <p class="meta" id="remediationStatus">${misses.length ? "Préparation de fiches ciblées…" : ""}</p>
+            <div id="remediationFiches"></div>
+          </div>
           <div class="actions">
             <button type="button" id="quizReplay">Rejouer</button>
             <button type="button" class="secondary" id="quizToFiches">Fiches</button>
@@ -1601,6 +1672,37 @@
       } catch (e) {
         setMsg($("genMsg"), e.message, false);
       }
+
+      if (misses.length) {
+        try {
+          const rem = await api("/api/quiz/remediate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ misses }),
+          });
+          const newFiches = rem.fiches || [];
+          if (rem.progression) renderProgression(rem.progression);
+          if (newFiches.length) {
+            fichesCache = [...fichesCache, ...newFiches];
+            renderFichesList();
+            $("remediationStatus").textContent =
+              `${newFiches.length} nouvelle${newFiches.length > 1 ? "s" : ""} fiche${newFiches.length > 1 ? "s" : ""} de remédiation ajoutée${newFiches.length > 1 ? "s" : ""}.`;
+            $("remediationFiches").innerHTML = newFiches.map((f) => {
+              const title = String(f.front || "").replace(/^\[Remédiation\]\s*/, "");
+              return `<div class="quiz-miss ok" style="margin-top:0.45rem">
+                <div class="tag">Nouvelle fiche</div>
+                <strong>${escapeHtml(title)}</strong>
+                <div class="meta">${escapeHtml((f.back || "").slice(0, 220))}${(f.back || "").length > 220 ? "…" : ""}</div>
+              </div>`;
+            }).join("");
+          } else {
+            $("remediationStatus").textContent = "Aucune fiche générée.";
+          }
+        } catch (e) {
+          $("remediationStatus").textContent = e.message || "Remédiation indisponible";
+        }
+      }
+
       $("quizReplay").onclick = () => startQuiz(quizQuestions.slice());
       $("quizToFiches").onclick = () => {
         $("fichesSection").scrollIntoView({ behavior: "smooth", block: "start" });

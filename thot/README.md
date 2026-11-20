@@ -113,6 +113,7 @@ Reference UX: Apple **Aperçu / Preview** (iPhone / macOS) — rendered pages, s
 | `PUT` | `/api/fiches/{id}` | `{ "front","back" }` | Edit recto/verso (marks edited) |
 | `GET` | `/api/quiz` | — | Stored quiz |
 | `POST` | `/api/quiz/attempt` | `{ "score","total" }` | Record quiz attempt |
+| `POST` | `/api/quiz/remediate` | `{ "misses":[{question,notion,correct_answer,chosen_answer}] }` | Append remédiation fiches for misses (LLM + course context) |
 | `POST` | `/api/pages/open` | `{ "page","total_pages?","doc_id?" }` | Mark page opened for a doc |
 | `GET` | `/api/progression` | — | Per-doc + total lecture / fiches / quiz |
 
@@ -129,6 +130,8 @@ Reference UX: Apple **Aperçu / Preview** (iPhone / macOS) — rendered pages, s
 - Phrase Sens: whole-selection L1 sense (course-aware) + word-level helps; respects effective L1/L2 (global or course override)
 - **Mes fiches**: empty state + CTAs, list with aperçu recto, edit recto/verso + save, revise (flip)
 - **Quiz**: launch screen, blocked if insufficient material, Q one-by-one + Quit, results + feedback, replay; last score on progression
+- **Remédiation**: after quiz misses, show wrong answers + generate targeted new fiches (appended, not wipe) via Groq + course PDF context
+- Fiches / quiz generation: LLM (Groq) with course excerpt + effective L1/L2 (global or course override)
 - Fiche edits persist and feed progression count
 
 ## Still out of slice

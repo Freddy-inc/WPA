@@ -1123,9 +1123,26 @@ impl Db {
             .bind(course_id)
             .execute(&self.pool)
             .await?;
+        self.insert_fiches(course_id, fiches).await?;
+        self.list_fiches().await
+    }
+
+    /// Append fiches without wiping existing ones (used for quiz remédiation).
+    pub async fn append_fiches(&self, fiches: &[(String, String)]) -> Result<Vec<FicheRow>> {
+        let course_id = self.active_course_id().await?;
+        let inserted = self.insert_fiches(course_id, fiches).await?;
+        Ok(inserted)
+    }
+
+    async fn insert_fiches(
+        &self,
+        course_id: i64,
+        fiches: &[(String, String)],
+    ) -> Result<Vec<FicheRow>> {
         let now = now_iso();
+        let mut ids = Vec::new();
         for (front, back) in fiches {
-            sqlx::query(
+            let res = sqlx::query(
                 "INSERT INTO fiches (course_id, front, back, edited, created_at) VALUES (?, ?, ?, 0, ?)",
             )
             .bind(course_id)
@@ -1134,8 +1151,15 @@ impl Db {
             .bind(&now)
             .execute(&self.pool)
             .await?;
+            ids.push(res.last_insert_rowid());
         }
-        self.list_fiches().await
+        let mut out = Vec::new();
+        for id in ids {
+            if let Some(row) = self.get_fiche(id).await? {
+                out.push(row);
+            }
+        }
+        Ok(out)
     }
 
     pub async fn list_fiches(&self) -> Result<Vec<FicheRow>> {

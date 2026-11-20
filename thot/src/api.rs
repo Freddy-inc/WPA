@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::db::Db;
-use crate::generate::{self, material_sufficient_for_quiz, GenerationResult};
+use crate::generate::{self, material_sufficient_for_quiz, GenerationResult, QuizMiss};
 use crate::glossary::{self, GlossaryResult};
 use crate::llm::LlmClient;
 use crate::pdf;
@@ -59,6 +59,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/fiches/{id}", get(get_fiche).put(update_fiche))
         .route("/api/quiz", get(get_quiz))
         .route("/api/quiz/attempt", post(quiz_attempt))
+        .route("/api/quiz/remediate", post(quiz_remediate))
         .route("/api/pages/open", post(open_page))
         .route("/api/progression", get(progression))
         .with_state(Arc::new(state))
@@ -781,6 +782,35 @@ async fn quiz_attempt(
         .map_err(ApiError::from)?;
     let snap = st.db.progression_snapshot().await.map_err(ApiError::from)?;
     Ok(Json(json!({ "ok": true, "progression": snap })))
+}
+
+#[derive(Deserialize)]
+struct QuizRemediateBody {
+    misses: Vec<QuizMiss>,
+}
+
+async fn quiz_remediate(
+    State(st): State<Arc<AppState>>,
+    Json(body): Json<QuizRemediateBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if body.misses.is_empty() {
+        return Ok(Json(json!({
+            "ok": true,
+            "fiches": [],
+            "count": 0,
+            "note": "Aucune erreur — pas de remédiation."
+        })));
+    }
+    let fiches = generate::remediate_misses(&st.db, &st.llm, &body.misses)
+        .await
+        .map_err(|e| ApiError::bad(e.to_string()))?;
+    let snap = st.db.progression_snapshot().await.map_err(ApiError::from)?;
+    Ok(Json(json!({
+        "ok": true,
+        "fiches": fiches,
+        "count": fiches.len(),
+        "progression": snap,
+    })))
 }
 
 async fn progression(

@@ -365,6 +365,20 @@ fn stub_response(system: &str, user: &str) -> String {
         .to_string();
     }
 
+    // Quiz remédiation fiches
+    if blob.contains("remédiation") || blob.contains("remediation") || blob.contains("missed quiz") {
+        return json!({
+            "fiches": [
+                {
+                    "front": "[Remédiation] Notion manquée",
+                    "back": "[STUB] Re-explication ciblée de la notion manquée à partir du cours (démo sans LLM distant).",
+                    "notion": "stub"
+                }
+            ]
+        })
+        .to_string();
+    }
+
     // Phrase sense (multi-word selection)
     if blob.contains("whole selection") || blob.contains("phrase_sense_l1") || blob.contains("\"phrase_l2\"")
     {
