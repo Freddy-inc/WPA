@@ -49,8 +49,11 @@ pub async fn generate(
         return Err(anyhow!("Matériel insuffisant pour générer"));
     }
 
-    let l1 = course.l1.as_deref().unwrap_or("fr");
-    let l2 = course.l2.as_deref().unwrap_or("en");
+    let (l1, l2, _) = db.effective_languages_for(&course).await.map_err(|e| {
+        anyhow!("{e}")
+    })?;
+    let l1 = l1.as_str();
+    let l2 = l2.as_str();
     // Keep chunks short for free-tier TPM; use more text for quiz coverage.
     let chunks = chunk_text(&course.text, 2500);
     let material = if kind == "quiz" {

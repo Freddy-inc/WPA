@@ -167,6 +167,11 @@ impl Db {
                 page INTEGER NOT NULL CHECK (page >= 1),
                 PRIMARY KEY (doc_id, page)
             );
+            CREATE TABLE IF NOT EXISTS app_settings (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                l1 TEXT,
+                l2 TEXT
+            );
             "#,
         )
         .execute(&self.pool)
@@ -179,20 +184,106 @@ impl Db {
         .execute(&self.pool)
         .await?;
 
-        // Ensure at least one course exists.
+        // Seed global languages once from first course that has them (legacy).
+        let _ = self.ensure_app_settings().await;
+        let (gl1, gl2) = self.get_global_languages().await?;
+        if gl1.is_none() || gl2.is_none() {
+            if let Some(c) = self.list_courses().await?.into_iter().find(|c| {
+                c.l1.as_ref().map(|s| !s.is_empty()).unwrap_or(false)
+                    && c.l2.as_ref().map(|s| !s.is_empty()).unwrap_or(false)
+            }) {
+                let _ = self
+                    .set_global_languages(
+                        c.l1.as_deref().unwrap_or("fr"),
+                        c.l2.as_deref().unwrap_or("en"),
+                    )
+                    .await;
+            }
+        }
+
+        // Ensure at least one course exists (no languages on course = use global).
         let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM courses")
             .fetch_one(&self.pool)
             .await?;
         if count.0 == 0 {
-            let _ = self
-                .create_course("Cours 1", Some("fr"), Some("en"))
-                .await?;
+            let _ = self.create_course("Cours 1", None, None).await?;
         } else if self.active_course().await?.is_none() {
             if let Some(c) = self.list_courses().await?.into_iter().next() {
                 let _ = self.set_active_course(c.id).await?;
             }
         }
         Ok(())
+    }
+
+    async fn ensure_app_settings(&self) -> Result<()> {
+        sqlx::query(
+            "INSERT OR IGNORE INTO app_settings (id, l1, l2) VALUES (1, NULL, NULL)",
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn get_global_languages(&self) -> Result<(Option<String>, Option<String>)> {
+        self.ensure_app_settings().await?;
+        let row: Option<(Option<String>, Option<String>)> =
+            sqlx::query_as("SELECT l1, l2 FROM app_settings WHERE id = 1")
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(row.unwrap_or((None, None)))
+    }
+
+    pub async fn set_global_languages(&self, l1: &str, l2: &str) -> Result<()> {
+        self.ensure_app_settings().await?;
+        sqlx::query(
+            "INSERT INTO app_settings (id, l1, l2) VALUES (1, ?, ?)
+             ON CONFLICT(id) DO UPDATE SET l1 = excluded.l1, l2 = excluded.l2",
+        )
+        .bind(l1)
+        .bind(l2)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Effective L1/L2 for a course: course override if both set, else global.
+    pub async fn effective_languages_for(
+        &self,
+        course: &CourseRow,
+    ) -> Result<(String, String, bool)> {
+        let overridden = course
+            .l1
+            .as_ref()
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false)
+            && course
+                .l2
+                .as_ref()
+                .map(|s| !s.trim().is_empty())
+                .unwrap_or(false);
+        if overridden {
+            return Ok((
+                course.l1.clone().unwrap(),
+                course.l2.clone().unwrap(),
+                true,
+            ));
+        }
+        let (g1, g2) = self.get_global_languages().await?;
+        let l1 = g1.filter(|s| !s.trim().is_empty()).ok_or_else(|| {
+            anyhow::anyhow!("Déclarez L1/L2 globales au démarrage de l'app")
+        })?;
+        let l2 = g2.filter(|s| !s.trim().is_empty()).ok_or_else(|| {
+            anyhow::anyhow!("Déclarez L1/L2 globales au démarrage de l'app")
+        })?;
+        Ok((l1, l2, false))
+    }
+
+    pub async fn effective_languages_active(&self) -> Result<(String, String, bool)> {
+        let course = self
+            .get_course()
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Aucun cours actif"))?;
+        self.effective_languages_for(&course).await
     }
 
     /// Rebuild from legacy singleton `course` / unscoped tables into multi-course v2.
@@ -758,15 +849,48 @@ impl Db {
         Ok(())
     }
 
+    /// Set global app languages (chosen once at start).
     pub async fn set_languages(&self, l1: &str, l2: &str) -> Result<()> {
-        let id = self.active_course_id().await?;
-        sqlx::query("UPDATE courses SET l1 = ?, l2 = ? WHERE id = ?")
-            .bind(l1)
-            .bind(l2)
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
+        self.set_global_languages(l1, l2).await
+    }
+
+    /// Optional per-course override. Pass `None` for both to clear (use global).
+    pub async fn set_course_language_override(
+        &self,
+        course_id: i64,
+        l1: Option<&str>,
+        l2: Option<&str>,
+    ) -> Result<CourseRow> {
+        if self.get_course_by_id(course_id).await?.is_none() {
+            return Err(anyhow::anyhow!("cours introuvable"));
+        }
+        match (l1, l2) {
+            (None, None) | (Some(""), Some("")) => {
+                sqlx::query("UPDATE courses SET l1 = NULL, l2 = NULL WHERE id = ?")
+                    .bind(course_id)
+                    .execute(&self.pool)
+                    .await?;
+            }
+            (Some(a), Some(b)) if !a.trim().is_empty() && !b.trim().is_empty() => {
+                if a.eq_ignore_ascii_case(b) {
+                    return Err(anyhow::anyhow!("Choisissez deux langues différentes"));
+                }
+                sqlx::query("UPDATE courses SET l1 = ?, l2 = ? WHERE id = ?")
+                    .bind(a.trim())
+                    .bind(b.trim())
+                    .bind(course_id)
+                    .execute(&self.pool)
+                    .await?;
+            }
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Surcharge : L1 et L2 requis ensemble, ou les deux vides pour le défaut global"
+                ));
+            }
+        }
+        self.get_course_by_id(course_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("cours introuvable"))
     }
 
     pub async fn rename_course(&self, id: i64, title: &str) -> Result<CourseRow> {

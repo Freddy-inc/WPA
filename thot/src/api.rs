@@ -44,8 +44,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/status", get(status))
         .route("/api/courses", get(list_courses).post(create_course))
         .route("/api/courses/{id}/activate", put(activate_course))
+        .route("/api/courses/{id}/languages", put(set_course_languages))
         .route("/api/courses/{id}", delete(delete_course).put(update_course))
-        .route("/api/languages", put(set_languages))
+        .route("/api/languages", get(get_languages).put(set_languages))
         .route("/api/import", post(import_pdf))
         .route("/api/documents", get(list_documents))
         .route("/api/documents/{id}/activate", put(activate_document))
@@ -88,9 +89,17 @@ async fn course_summary_async(
     c: &crate::db::CourseRow,
 ) -> Result<serde_json::Value, ApiError> {
     let docs = st.db.list_documents(c.id).await.map_err(ApiError::from)?;
-    let langs = match (&c.l1, &c.l2) {
-        (Some(a), Some(b)) => format!("{a} ← {b}"),
-        _ => "Langues non définies".to_string(),
+    let (eff_l1, eff_l2, overridden) = st
+        .db
+        .effective_languages_for(c)
+        .await
+        .unwrap_or_else(|_| ("?".into(), "?".into(), false));
+    let langs = if eff_l1 == "?" {
+        "Langues non définies".to_string()
+    } else if overridden {
+        format!("{eff_l1} ← {eff_l2} (surcharge)")
+    } else {
+        format!("{eff_l1} ← {eff_l2}")
     };
     let n = docs.len();
     let subtitle = if n == 0 {
@@ -109,6 +118,9 @@ async fn course_summary_async(
         "docs_count": n,
         "l1": c.l1,
         "l2": c.l2,
+        "l1_effective": if eff_l1 == "?" { serde_json::Value::Null } else { json!(eff_l1) },
+        "l2_effective": if eff_l2 == "?" { serde_json::Value::Null } else { json!(eff_l2) },
+        "languages_overridden": overridden,
         "active": c.active,
         "has_text": !c.text.trim().is_empty(),
         "created_at": c.created_at,
@@ -162,11 +174,23 @@ async fn status(State(st): State<Arc<AppState>>) -> Result<Json<serde_json::Valu
         Some(c) => Some(course_summary_async(&st, c).await?),
         None => None,
     };
+    let (global_l1, global_l2) = st.db.get_global_languages().await.map_err(ApiError::from)?;
+    let effective = match &course {
+        Some(c) => st.db.effective_languages_for(c).await.ok(),
+        None => None,
+    };
 
     Ok(Json(json!({
         "provider": st.llm.provider_label(),
         "groq_key_present": st.llm.has_groq_key(),
         "groq_key_env": st.llm.groq_key_env_name(),
+        "languages": {
+            "global_l1": global_l1,
+            "global_l2": global_l2,
+            "effective_l1": effective.as_ref().map(|(a,_,_)| a),
+            "effective_l2": effective.as_ref().map(|(_,b,_)| b),
+            "course_overridden": effective.as_ref().map(|(_,_,o)| *o).unwrap_or(false),
+        },
         "courses": courses_json,
         "active_course": active_course_json,
         "course": course.as_ref().map(|c| json!({
@@ -330,6 +354,20 @@ struct LanguagesBody {
     l2: String,
 }
 
+async fn get_languages(
+    State(st): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let (global_l1, global_l2) = st.db.get_global_languages().await.map_err(ApiError::from)?;
+    let effective = st.db.effective_languages_active().await.ok();
+    Ok(Json(json!({
+        "global_l1": global_l1,
+        "global_l2": global_l2,
+        "effective_l1": effective.as_ref().map(|(a,_,_)| a),
+        "effective_l2": effective.as_ref().map(|(_,b,_)| b),
+        "course_overridden": effective.as_ref().map(|(_,_,o)| *o).unwrap_or(false),
+    })))
+}
+
 async fn set_languages(
     State(st): State<Arc<AppState>>,
     Json(body): Json<LanguagesBody>,
@@ -342,12 +380,48 @@ async fn set_languages(
     if l1.eq_ignore_ascii_case(l2) {
         return Err(ApiError::bad("Choisissez deux langues différentes"));
     }
+    // Global app languages (default for all courses).
     st.db.set_languages(l1, l2).await.map_err(ApiError::from)?;
-    let course = st.db.active_course().await.map_err(ApiError::from)?;
     Ok(Json(json!({
-        "l1": l1,
-        "l2": l2,
-        "course_id": course.as_ref().map(|c| c.id),
+        "ok": true,
+        "scope": "global",
+        "global_l1": l1,
+        "global_l2": l2,
+    })))
+}
+
+#[derive(Deserialize)]
+struct CourseLanguagesBody {
+    /// When true, clear course override and use global.
+    #[serde(default)]
+    clear: bool,
+    #[serde(default)]
+    l1: Option<String>,
+    #[serde(default)]
+    l2: Option<String>,
+}
+
+async fn set_course_languages(
+    State(st): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    Json(body): Json<CourseLanguagesBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let course = if body.clear {
+        st.db
+            .set_course_language_override(id, None, None)
+            .await
+            .map_err(|e| ApiError::bad(e.to_string()))?
+    } else {
+        let l1 = body.l1.as_deref().map(str::trim).filter(|s| !s.is_empty());
+        let l2 = body.l2.as_deref().map(str::trim).filter(|s| !s.is_empty());
+        st.db
+            .set_course_language_override(id, l1, l2)
+            .await
+            .map_err(|e| ApiError::bad(e.to_string()))?
+    };
+    Ok(Json(json!({
+        "ok": true,
+        "course": course_summary_async(&st, &course).await?,
     })))
 }
 
@@ -529,14 +603,11 @@ async fn define_glossary(
         .map_err(ApiError::from)?
         .ok_or_else(|| ApiError::bad("Aucun cours — créez un cours d'abord"))?;
 
-    let l1 = course
-        .l1
-        .clone()
-        .ok_or_else(|| ApiError::bad("Déclarez L1/L2 avant le glossaire"))?;
-    let l2 = course
-        .l2
-        .clone()
-        .ok_or_else(|| ApiError::bad("Déclarez L1/L2 avant le glossaire"))?;
+    let (l1, l2, _) = st
+        .db
+        .effective_languages_for(&course)
+        .await
+        .map_err(|e| ApiError::bad(e.to_string()))?;
 
     let context = body
         .context

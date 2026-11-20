@@ -49,11 +49,18 @@ If Groq and Ollama are both unavailable, the client **falls back to stub** autom
 
 Sample PDFs: `fixtures/sample-photosynthesis.pdf`, `fixtures/sample-cell-respiration.pdf`.
 
+## Languages (L1 / L2)
+
+- **Global** (once at app start): `PUT /api/languages` — default for every course.
+- **Optional per-course override**: `PUT /api/courses/{id}/languages` with `{l1,l2}` or `{clear:true}`.
+- Glossary / fiches / quiz use the **effective** pair (override if set, else global).
+
 ## Multi-course + multi-document (rules)
 
 | Concern | Rule |
 | --- | --- |
 | Courses | Many independent courses (`POST /api/courses`, `PUT …/activate`) |
+| Languages | Global L1/L2 at app start; optional per-course override (default = global) |
 | Isolation | Docs, glossary cache, fiches, quiz, progression are **per course** |
 | Documents | Many PDFs under the **active** course (`POST /api/import` adds, never wipes siblings) |
 | Reader | Opens the **active** document of the active course |
@@ -87,7 +94,9 @@ Reference UX: Apple **Aperçu / Preview** (iPhone / macOS) — rendered pages, s
 | `PUT` | `/api/courses/{id}/activate` | — | Switch active course |
 | `PUT` | `/api/courses/{id}` | `{ "title" }` | Rename |
 | `DELETE` | `/api/courses/{id}` | — | Delete course + its data |
-| `PUT` | `/api/languages` | `{ "l1","l2" }` | Language pair (active course) |
+| `GET` | `/api/languages` | — | Global + effective L1/L2 |
+| `PUT` | `/api/languages` | `{ "l1","l2" }` | Set **global** app languages |
+| `PUT` | `/api/courses/{id}/languages` | `{ "l1","l2" }` or `{ "clear":true }` | Optional course override |
 | `POST` | `/api/import` | `multipart` field `file` | Add PDF to **active** course |
 | `GET` | `/api/documents` | — | List documents |
 | `PUT` | `/api/documents/{id}/activate` | — | Switch active reader PDF |
@@ -107,6 +116,7 @@ Reference UX: Apple **Aperçu / Preview** (iPhone / macOS) — rendered pages, s
 ## What works
 
 - Several independent courses: create / list / switch; each isolates docs·glossary·fiches·quiz·progression
+- Global L1/L2 at app start; optional per-course language override (default = global)
 - Several PDFs under the active course: add / list / switch; corpus scoped to that course
 - PDF text extraction (`pdf-extract`) with clear failure for empty/scan PDFs
 - PDF.js page rendering + selectable text layer + selection→Sens menu

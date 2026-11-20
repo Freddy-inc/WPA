@@ -430,6 +430,34 @@
     </div>
 
     <div id="viewHome" class="view active">
+      <section id="globalLangs" style="margin-bottom:0.85rem">
+        <h2>Langues (app)</h2>
+        <p class="meta">Choisies une fois au démarrage. Chaque cours utilise ce défaut, sauf surcharge optionnelle.</p>
+        <div class="row">
+          <div>
+            <label for="globalL1">L1 (ma langue)</label>
+            <select id="globalL1">
+              <option value="fr" selected>Français</option>
+              <option value="en">English</option>
+              <option value="es">Español</option>
+              <option value="de">Deutsch</option>
+            </select>
+          </div>
+          <div>
+            <label for="globalL2">L2 (langue des cours)</label>
+            <select id="globalL2">
+              <option value="en" selected>English</option>
+              <option value="fr">Français</option>
+              <option value="es">Español</option>
+              <option value="de">Deutsch</option>
+            </select>
+          </div>
+        </div>
+        <div class="actions">
+          <button type="button" id="saveGlobalLangs">Enregistrer</button>
+        </div>
+        <div id="globalLangMsg"></div>
+      </section>
       <div class="search-wrap">
         <span class="lens" aria-hidden="true">⌕</span>
         <input type="search" id="courseSearch" placeholder="Rechercher un cours" autocomplete="off" />
@@ -451,11 +479,16 @@
 
       <div class="hub-stack">
     <section id="langs">
-      <h2>Langues</h2>
-      <div class="row">
+      <h2>Langues du cours</h2>
+      <p class="meta" id="courseLangDefault">Défaut app : —</p>
+      <label style="display:flex;align-items:center;gap:0.45rem;margin:0.55rem 0;color:var(--ink)">
+        <input type="checkbox" id="courseLangOverride" />
+        Surcharger L1/L2 pour ce cours
+      </label>
+      <div class="row" id="courseLangRow">
         <div>
-          <label for="l1">L1 (ma langue)</label>
-          <select id="l1">
+          <label for="courseL1">L1</label>
+          <select id="courseL1" disabled>
             <option value="fr" selected>Français</option>
             <option value="en">English</option>
             <option value="es">Español</option>
@@ -463,8 +496,8 @@
           </select>
         </div>
         <div>
-          <label for="l2">L2 (langue du cours)</label>
-          <select id="l2">
+          <label for="courseL2">L2</label>
+          <select id="courseL2" disabled>
             <option value="en" selected>English</option>
             <option value="fr">Français</option>
             <option value="es">Español</option>
@@ -473,7 +506,7 @@
         </div>
       </div>
       <div class="actions">
-        <button type="button" id="saveLangs">Enregistrer</button>
+        <button type="button" id="saveCourseLangs">Enregistrer</button>
       </div>
       <div id="langMsg"></div>
     </section>
@@ -689,8 +722,9 @@
           label = `LLM: ${s.provider} (pas de GROQ_API_KEY / Etude)`;
         }
         $("provider").textContent = label;
-        if (s.course?.l1) $("l1").value = s.course.l1;
-        if (s.course?.l2) $("l2").value = s.course.l2;
+        const langs = s.languages || {};
+        if (langs.global_l1) $("globalL1").value = langs.global_l1;
+        if (langs.global_l2) $("globalL2").value = langs.global_l2;
         activeCourseId = s.course?.id || s.active_course?.id || null;
         coursesCache = s.courses || [];
         renderCourses(coursesCache);
@@ -701,6 +735,7 @@
           $("hubTitle").textContent = active.title || "Cours";
           $("hubSubtitle").textContent = active.subtitle || "";
         }
+        syncCourseLangUi(active, langs);
         renderDocuments(s.documents || [], s.active_document);
         if (s.active_document?.has_pdf) {
           activeDocId = s.active_document.id;
@@ -766,19 +801,52 @@
 
     $("courseSearch").oninput = () => renderCourses(coursesCache);
 
+    function syncCourseLangUi(active, langs) {
+      const g1 = langs?.global_l1 || $("globalL1").value;
+      const g2 = langs?.global_l2 || $("globalL2").value;
+      $("courseLangDefault").textContent = g1 && g2
+        ? `Défaut app : ${g1} ← ${g2}`
+        : "Défaut app : non défini — enregistrez les langues sur l’accueil";
+      const overridden = !!(active && active.languages_overridden);
+      $("courseLangOverride").checked = overridden;
+      $("courseL1").disabled = !overridden;
+      $("courseL2").disabled = !overridden;
+      if (overridden && active?.l1) $("courseL1").value = active.l1;
+      else $("courseL1").value = g1 || "fr";
+      if (overridden && active?.l2) $("courseL2").value = active.l2;
+      else $("courseL2").value = g2 || "en";
+    }
+
+    $("courseLangOverride").onchange = () => {
+      const on = $("courseLangOverride").checked;
+      $("courseL1").disabled = !on;
+      $("courseL2").disabled = !on;
+    };
+
+    $("saveGlobalLangs").onclick = async () => {
+      try {
+        const body = { l1: $("globalL1").value, l2: $("globalL2").value };
+        await api("/api/languages", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        setMsg($("globalLangMsg"), `Défaut app : ${body.l1} ← ${body.l2}`, true);
+        await refreshStatus();
+      } catch (e) {
+        setMsg($("globalLangMsg"), e.message, false);
+      }
+    };
+
     $("createCourseBtn").onclick = async () => {
       const title = ($("newCourseTitle").value || "").trim();
       if (!title) return setMsg($("courseMsg"), "Donnez un titre au cours", false);
       try {
-        const body = {
-          title,
-          l1: $("l1").value || "fr",
-          l2: $("l2").value || "en",
-        };
+        // No l1/l2 → course inherits global default
         const data = await api("/api/courses", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
+          body: JSON.stringify({ title }),
         });
         $("newCourseTitle").value = "";
         setMsg($("courseMsg"), "", true);
@@ -865,15 +933,29 @@
       } catch (_) { /* ignore */ }
     }
 
-    $("saveLangs").onclick = async () => {
+    $("saveCourseLangs").onclick = async () => {
+      if (!activeCourseId) return setMsg($("langMsg"), "Aucun cours actif", false);
       try {
-        const body = { l1: $("l1").value, l2: $("l2").value };
-        await api("/api/languages", {
+        let body;
+        if ($("courseLangOverride").checked) {
+          body = { l1: $("courseL1").value, l2: $("courseL2").value };
+        } else {
+          body = { clear: true };
+        }
+        const data = await api(`/api/courses/${activeCourseId}/languages`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
         });
-        setMsg($("langMsg"), `Paire enregistrée : ${body.l1} ← ${body.l2}`, true);
+        const c = data.course;
+        setMsg(
+          $("langMsg"),
+          c?.languages_overridden
+            ? `Surcharge : ${c.l1_effective} ← ${c.l2_effective}`
+            : `Défaut app utilisé (${c?.l1_effective || "?"} ← ${c?.l2_effective || "?"})`,
+          true
+        );
+        await refreshStatus();
       } catch (e) {
         setMsg($("langMsg"), e.message, false);
       }
