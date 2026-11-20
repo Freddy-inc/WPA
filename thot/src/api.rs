@@ -157,13 +157,20 @@ async fn status(State(st): State<Arc<AppState>>) -> Result<Json<serde_json::Valu
     } else {
         None
     };
-    let fiches = st.db.list_fiches().await.map_err(ApiError::from)?;
-    let quiz = st.db.get_quiz().await.map_err(ApiError::from)?;
-    let quiz_count = quiz
-        .as_ref()
-        .and_then(|q| serde_json::from_str::<Vec<serde_json::Value>>(&q.questions_json).ok())
-        .map(|v| v.len())
-        .unwrap_or(0);
+    // No active course → empty fiches/quiz/progression (do not 500 the home empty state).
+    let (fiches_count, quiz_count, progression) = if course_id.is_some() {
+        let fiches = st.db.list_fiches().await.map_err(ApiError::from)?;
+        let quiz = st.db.get_quiz().await.map_err(ApiError::from)?;
+        let quiz_count = quiz
+            .as_ref()
+            .and_then(|q| serde_json::from_str::<Vec<serde_json::Value>>(&q.questions_json).ok())
+            .map(|v| v.len())
+            .unwrap_or(0);
+        let progression = st.db.progression_snapshot().await.map_err(ApiError::from)?;
+        (fiches.len(), quiz_count, Some(progression))
+    } else {
+        (0, 0, None)
+    };
 
     let docs_json: Vec<_> = docs.iter().map(|d| doc_summary(d, &st)).collect();
     let active_json = active.as_ref().map(|d| doc_summary(d, &st));
@@ -213,9 +220,9 @@ async fn status(State(st): State<Arc<AppState>>) -> Result<Json<serde_json::Valu
         })),
         "documents": docs_json,
         "active_document": active_json,
-        "fiches_count": fiches.len(),
+        "fiches_count": fiches_count,
         "quiz_questions": quiz_count,
-        "progression": st.db.progression_snapshot().await.map_err(ApiError::from)?,
+        "progression": progression,
         "rules": {
             "scope": "many_courses_each_many_docs",
             "courses": "independent — own docs, glossary cache, fiches, quiz, progression",
@@ -450,7 +457,9 @@ async fn import_pdf(
 
     let bytes = bytes.ok_or_else(|| ApiError::bad("fichier PDF manquant (champ file)"))?;
     if bytes.len() > 15 * 1024 * 1024 {
-        return Err(ApiError::bad("PDF trop lourd (max 15 Mo)"));
+        return Err(ApiError::bad(
+            "Échec chargement : PDF trop lourd (max 15 Mo) — réessayez avec un autre fichier",
+        ));
     }
 
     let course_id = st.db.active_course_id().await.map_err(ApiError::from)?;
@@ -625,7 +634,7 @@ async fn define_glossary(
         &l2,
     )
     .await
-    .map_err(|e| ApiError::bad(e.to_string()))?;
+    .map_err(map_llm_err)?;
 
     Ok(Json(result))
 }
@@ -642,7 +651,7 @@ async fn generate_content(
 ) -> Result<Json<GenerationResult>, ApiError> {
     let result = generate::generate(&st.db, &st.llm, &body.kind)
         .await
-        .map_err(|e| ApiError::bad(e.to_string()))?;
+        .map_err(map_llm_err)?;
     Ok(Json(result))
 }
 
@@ -803,7 +812,7 @@ async fn quiz_remediate(
     }
     let fiches = generate::remediate_misses(&st.db, &st.llm, &body.misses)
         .await
-        .map_err(|e| ApiError::bad(e.to_string()))?;
+        .map_err(map_llm_err)?;
     let snap = st.db.progression_snapshot().await.map_err(ApiError::from)?;
     Ok(Json(json!({
         "ok": true,
@@ -839,6 +848,22 @@ impl ApiError {
             status: StatusCode::NOT_FOUND,
             message: msg.into(),
         }
+    }
+    fn rate_limited(msg: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            message: msg.into(),
+        }
+    }
+}
+
+fn map_llm_err(e: anyhow::Error) -> ApiError {
+    let msg = e.to_string();
+    let lower = msg.to_lowercase();
+    if lower.contains("429") || lower.contains("rate limit") || lower.contains("limite groq") {
+        ApiError::rate_limited(msg)
+    } else {
+        ApiError::bad(msg)
     }
 }
 

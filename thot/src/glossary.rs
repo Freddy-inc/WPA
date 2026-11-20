@@ -107,7 +107,18 @@ async fn define_single_term(
     }
 
     let snippet = nearest_context(context, term, 400);
-    let draft = draft_meaning(llm, term, &snippet, l1, l2).await?;
+    let draft = match draft_meaning(llm, term, &snippet, l1, l2).await {
+        Ok(d) => d,
+        Err(e) => {
+            let m = e.to_string();
+            if m.to_lowercase().contains("429") || m.to_lowercase().contains("limite") {
+                return Err(e);
+            }
+            return Err(anyhow!(
+                "Sens non disponible pour « {term} » — resserrez la sélection ou continuez la lecture ({m})"
+            ));
+        }
+    };
     let sources = verifier.lookup(term, l2).await;
     let reconciled = reconcile(llm, term, &draft.meaning_l1, &sources, l1, l2).await?;
 

@@ -18,13 +18,14 @@ pub fn extract_text(filename: &str, bytes: &[u8]) -> Result<ExtractedPdf> {
         return Err(anyhow!("Fichier non PDF (signature manquante)"));
     }
 
-    let text = pdf_extract::extract_text_from_mem(bytes)
-        .map_err(|e| anyhow!("Import impossible : texte non extractible ({e})"))?;
+    let text = pdf_extract::extract_text_from_mem(bytes).map_err(|e| {
+        anyhow!("Texte non extractible — choisissez un autre fichier ({e})")
+    })?;
 
     let cleaned = normalize_whitespace(&text);
     if cleaned.chars().filter(|c| c.is_alphanumeric()).count() < 40 {
         return Err(anyhow!(
-            "Import impossible : texte non extractible (PDF scanné ou couche texte absente)"
+            "Texte non extractible (PDF scanné ou sans couche texte) — essayez un autre fichier"
         ));
     }
 

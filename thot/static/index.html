@@ -745,10 +745,29 @@
     let reviseIndex = 0;
     let reviseFlipped = false;
 
+    function friendlyError(status, msg) {
+      const m = String(msg || "");
+      if (status === 429 || /429|limite groq|rate limit/i.test(m)) {
+        return m.includes("Limite")
+          ? m
+          : "Limite Groq atteinte (429). Réessayez dans une minute — la lecture reste possible.";
+      }
+      if (/texte non extractible|scanné|couche texte/i.test(m)) {
+        return m;
+      }
+      if (/sens non disponible/i.test(m)) {
+        return m;
+      }
+      if (/trop large|resserrez/i.test(m)) {
+        return m;
+      }
+      return m || "Une erreur est survenue";
+    }
+
     async function api(path, opts = {}) {
       const res = await fetch(path, opts);
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || res.statusText);
+      if (!res.ok) throw new Error(friendlyError(res.status, data.error || res.statusText));
       return data;
     }
 
@@ -839,7 +858,13 @@
             return hay.includes(q);
           });
       if (!filtered.length) {
-        el.innerHTML = `<div class="empty-state"><p>${courses.length ? "Aucun résultat." : "Aucun cours — créez-en un."}</p></div>`;
+        el.innerHTML = courses.length
+          ? `<div class="empty-state"><p>Aucun résultat.</p></div>`
+          : `<div class="empty-state" id="emptyCoursesState">
+              <p><strong>Aucun support</strong></p>
+              <p>Créez un cours puis importez un PDF pour commencer.</p>
+              <p class="meta">Si l’import échoue (PDF scanné / trop lourd) : message clair + autre fichier.</p>
+            </div>`;
         return;
       }
       el.innerHTML = filtered.map((c) => {
@@ -1230,10 +1255,16 @@
       }
     };
     function renderGlossaryResult(g) {
-      const badgeClass = g.verified ? "ok" : "warn";
+      const verified = !!g.verified;
+      const badgeClass = verified ? "ok" : "warn";
+      const badgeText = g.badge
+        || (verified ? "Vérifié sources web" : "Sens proposé — sources limitées");
       const sources = (g.sources || [])
         .map((s) => `<li><a href="${s.url}" target="_blank" rel="noopener">${escapeHtml(s.kind)}: ${escapeHtml(s.title)}</a></li>`)
         .join("");
+      const sourcesBlock = sources
+        ? `<div class="words-label">Sources croisées</div><ul class="sources">${sources}</ul>`
+        : `<div class="meta" style="color:#b8c0d0;margin-top:0.35rem">Pas de source web officielle trouvée pour ce terme.</div>`;
       const isPhrase = g.kind === "phrase" || (g.phrase_sense_l1 && (g.words || []).length);
       const phraseSense = g.phrase_sense_l1 || g.meaning_l1 || "";
       const words = Array.isArray(g.words) ? g.words : [];
@@ -1251,16 +1282,15 @@
           <div class="phrase-label">Sens de la phrase (L1)</div>
           <div class="phrase-sense">${escapeHtml(phraseSense)}</div>
           ${wordsHtml}
-          <span class="badge ${badgeClass}">${escapeHtml(g.badge || "Sens de la phrase")}</span>
-          ${sources ? `<ul class="sources">${sources}</ul>` : ""}
+          <span class="badge ${badgeClass}">${escapeHtml(badgeText)}</span>
           <div class="meta" style="color:#b8c0d0">${g.cached ? "cache" : "nouveau"}</div>
         `;
       } else {
         $("selBody").innerHTML = `
-          <div>${escapeHtml(g.meaning_l1)}</div>
-          <span class="badge ${badgeClass}">${escapeHtml(g.badge)}</span>
-          ${sources ? `<ul class="sources">${sources}</ul>` : ""}
-          <div class="meta" style="color:#b8c0d0">${g.cached ? "cache" : "nouveau"}</div>
+          <div>${escapeHtml(g.meaning_l1 || "Sens non disponible")}</div>
+          <span class="badge ${badgeClass}">${escapeHtml(badgeText)}</span>
+          ${sourcesBlock}
+          <div class="meta" style="color:#b8c0d0">${g.cached ? "cache" : "nouveau"} · ${verified ? "croisement OK" : "non vérifié"}</div>
         `;
       }
     }
@@ -1284,7 +1314,9 @@
         });
         renderGlossaryResult(g);
       } catch (e) {
-        $("selBody").textContent = e.message;
+        const msg = e.message || "Sens non disponible";
+        $("selBody").innerHTML = `<div class="err" style="color:#f5b4b0">${escapeHtml(msg)}</div>
+          <div class="meta" style="color:#b8c0d0;margin-top:0.35rem">La lecture du PDF reste possible.</div>`;
       } finally {
         $("selSense").disabled = false;
       }

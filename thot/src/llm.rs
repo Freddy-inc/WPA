@@ -191,6 +191,12 @@ impl LlmClient {
                     return Ok(text);
                 }
                 Err(err) => {
+                    if is_rate_limited(&err) {
+                        // Do not silently fall back — surface a clear UX message.
+                        return Err(anyhow!(
+                            "Limite Groq atteinte (429). Réessayez dans une minute — la lecture reste possible."
+                        ));
+                    }
                     warn!(error = %err, "Groq failed; trying Ollama fallback");
                 }
             }
@@ -213,6 +219,11 @@ impl LlmClient {
                 Ok(text)
             }
             Err(err) => {
+                if is_rate_limited(&err) {
+                    return Err(anyhow!(
+                        "Limite de requêtes IA atteinte (429). Réessayez plus tard."
+                    ));
+                }
                 warn!(error = %err, "Ollama failed; using stub responses");
                 self.used_stub
                     .store(true, std::sync::atomic::Ordering::Relaxed);
@@ -270,6 +281,9 @@ impl LlmClient {
         let resp = req.send().await.context("HTTP request to LLM")?;
         let status = resp.status();
         let body_text = resp.text().await.unwrap_or_default();
+        if status.as_u16() == 429 {
+            return Err(anyhow!("LLM HTTP 429 rate limit: {body_text}"));
+        }
         if !status.is_success() {
             return Err(anyhow!("LLM HTTP {status}: {body_text}"));
         }
@@ -283,6 +297,11 @@ impl LlmClient {
             .ok_or_else(|| anyhow!("empty choices from LLM"))?;
         Ok(content)
     }
+}
+
+fn is_rate_limited(err: &anyhow::Error) -> bool {
+    let s = err.to_string().to_lowercase();
+    s.contains("429") || s.contains("rate limit") || s.contains("too many requests")
 }
 
 /// Deterministic demo responses when no live LLM is available.
