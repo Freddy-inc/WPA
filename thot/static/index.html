@@ -10,19 +10,20 @@
   <link rel="stylesheet" href="/vendor/pdfjs/pdf_viewer.css" />
   <style>
     :root {
-      --ink: #1a1f2e;
-      --muted: #5c6578;
-      --line: #d8dde8;
-      --bg: #e8ecf1;
-      --panel: #fffcf7;
+      --ink: #1c2430;
+      --muted: #6b7385;
+      --line: #e2e6ee;
+      --bg: #eef1f5;
+      --panel: #ffffff;
       --accent: #0f6b5c;
       --ok: #1f7a4c;
       --warn: #8a6d1d;
       --bad: #a33b2d;
-      --shadow: 0 12px 40px rgba(26, 31, 46, 0.08);
+      --shadow: 0 8px 28px rgba(28, 36, 48, 0.07);
       --font-display: "Fraunces", "Iowan Old Style", Georgia, serif;
       --font-body: "Source Sans 3", "Segoe UI", sans-serif;
       --viewer-chrome: #2b303b;
+      --icon-blue: #3b82c4;
     }
 
     * { box-sizing: border-box; }
@@ -31,39 +32,160 @@
       font-family: var(--font-body);
       color: var(--ink);
       background:
-        radial-gradient(ellipse at 10% 0%, #dfe8e4 0%, transparent 42%),
-        radial-gradient(ellipse at 92% 8%, #e6e0d8 0%, transparent 38%),
+        linear-gradient(180deg, #f5f7fa 0%, var(--bg) 40%),
         var(--bg);
       min-height: 100vh;
     }
-    header {
-      padding: 1.1rem 1.5rem 0.4rem;
-      max-width: 1100px;
+    .app-shell {
+      max-width: 560px;
       margin: 0 auto;
+      padding: 0 1rem 3rem;
     }
-    header h1 {
+    .brand-bar {
+      padding: 1.35rem 0.15rem 0.85rem;
+    }
+    .brand-bar h1 {
       font-family: var(--font-display);
-      font-size: clamp(1.9rem, 3.5vw, 2.5rem);
+      font-size: clamp(2rem, 6vw, 2.55rem);
       margin: 0;
-      letter-spacing: -0.02em;
+      letter-spacing: -0.03em;
     }
-    header p { color: var(--muted); margin: 0.3rem 0 0; max-width: 42rem; }
-    main {
-      max-width: 1100px;
-      margin: 0 auto;
-      padding: 0.75rem 1.5rem 3rem;
+    .brand-bar p { color: var(--muted); margin: 0.35rem 0 0; line-height: 1.35; }
+    .view { display: none; }
+    .view.active { display: block; }
+    .hub-top {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      padding: 0.85rem 0 0.4rem;
+    }
+    .hub-top h2 {
+      font-family: var(--font-display);
+      font-size: 1.35rem;
+      margin: 0;
+      flex: 1;
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .back-btn {
+      width: 2.4rem;
+      height: 2.4rem;
+      padding: 0;
+      border-radius: 10px;
+      background: #fff;
+      color: var(--ink);
+      border: 1px solid var(--line);
+      font-size: 1.25rem;
+      line-height: 1;
+      flex-shrink: 0;
+    }
+    .search-wrap {
+      position: relative;
+      margin: 0.35rem 0 0.85rem;
+    }
+    .search-wrap input {
+      width: 100%;
+      padding: 0.7rem 0.95rem 0.7rem 2.55rem;
+      border: none;
+      border-radius: 14px;
+      background: #fff;
+      box-shadow: var(--shadow);
+      font: inherit;
+      color: var(--ink);
+    }
+    .search-wrap .lens {
+      position: absolute;
+      left: 0.9rem;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--muted);
+      pointer-events: none;
+      font-size: 1rem;
+    }
+    .create-row {
       display: grid;
-      gap: 1rem;
+      grid-template-columns: 1fr auto;
+      gap: 0.5rem;
+      margin-bottom: 0.85rem;
+    }
+    .create-row input {
+      border: none;
+      border-radius: 12px;
+      background: #fff;
+      box-shadow: var(--shadow);
+      padding: 0.65rem 0.85rem;
+    }
+    .course-cards {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+    .course-card {
+      display: flex;
+      align-items: center;
+      gap: 0.9rem;
+      width: 100%;
+      text-align: left;
+      padding: 1rem 1.05rem;
+      border: none;
+      border-radius: 14px;
+      background: #fff;
+      box-shadow: var(--shadow);
+      color: var(--ink);
+      font: inherit;
+      cursor: pointer;
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+    .course-card:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 12px 32px rgba(28, 36, 48, 0.1);
+    }
+    .course-card:active { transform: scale(0.99); }
+    .course-icon {
+      width: 3.1rem;
+      height: 3.1rem;
+      border-radius: 50%;
+      background: linear-gradient(145deg, #e8f1f8, #d5e6f3);
+      color: var(--icon-blue);
+      display: grid;
+      place-items: center;
+      flex-shrink: 0;
+      font-size: 1.25rem;
+    }
+    .course-card .text { flex: 1; min-width: 0; }
+    .course-card .text strong {
+      display: block;
+      font-weight: 700;
+      font-size: 1.02rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .course-card .text .sub {
+      margin-top: 0.2rem;
+      font-size: 0.88rem;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .hub-stack {
+      display: grid;
+      gap: 0.85rem;
+      margin-top: 0.55rem;
     }
     section {
       background: var(--panel);
       border: 1px solid var(--line);
       box-shadow: var(--shadow);
+      border-radius: 14px;
       padding: 1.05rem 1.15rem 1.2rem;
     }
     section h2 {
       font-family: var(--font-display);
-      font-size: 1.2rem;
+      font-size: 1.15rem;
       margin: 0 0 0.7rem;
     }
     label { display: block; font-size: 0.9rem; color: var(--muted); margin-bottom: 0.25rem; }
@@ -300,33 +422,36 @@
   </style>
 </head>
 <body>
-  <header>
-    <h1>Thot</h1>
-    <p>Plusieurs cours indépendants. Chaque cours a ses PDFs, glossaire, fiches, quiz et progression. Basculez de cours sans mélanger les données.</p>
-    <p class="meta"><span id="provider" class="status-pill">…</span></p>
-  </header>
+  <div class="app-shell">
+    <div class="brand-bar" id="homeBrand">
+      <h1>Thot</h1>
+      <p>Vos cours. Touchez une carte pour ouvrir le hub (PDFs, fiches, quiz, progression).</p>
+      <p class="meta"><span id="provider" class="status-pill">…</span></p>
+    </div>
 
-  <main>
-    <section id="coursesSection">
-      <h2>1. Cours</h2>
-      <p class="meta">Créez et basculez entre des cours isolés. Docs / fiches / quiz / glossaire / progression restent dans le cours actif.</p>
-      <div class="row">
-        <div>
-          <label for="newCourseTitle">Nouveau cours</label>
-          <input type="text" id="newCourseTitle" placeholder="ex. Biologie L2" />
-        </div>
-        <div style="display:flex;align-items:flex-end">
-          <div class="actions" style="margin:0;width:100%">
-            <button type="button" id="createCourseBtn">Créer</button>
-          </div>
-        </div>
+    <div id="viewHome" class="view active">
+      <div class="search-wrap">
+        <span class="lens" aria-hidden="true">⌕</span>
+        <input type="search" id="courseSearch" placeholder="Rechercher un cours" autocomplete="off" />
+      </div>
+      <div class="create-row">
+        <input type="text" id="newCourseTitle" placeholder="Nouveau cours — ex. Biologie L2" />
+        <button type="button" id="createCourseBtn">Créer</button>
       </div>
       <div id="courseMsg"></div>
-      <div id="coursesList" class="fiche-list" style="margin-top:0.75rem"></div>
-    </section>
+      <div id="coursesList" class="course-cards"></div>
+    </div>
 
+    <div id="viewHub" class="view">
+      <div class="hub-top">
+        <button type="button" class="back-btn" id="backToCourses" aria-label="Retour aux cours">‹</button>
+        <h2 id="hubTitle">Cours</h2>
+      </div>
+      <p class="meta" id="hubSubtitle" style="margin:0 0 0.35rem 0.15rem"></p>
+
+      <div class="hub-stack">
     <section id="langs">
-      <h2>2. Langues (cours actif)</h2>
+      <h2>Langues</h2>
       <div class="row">
         <div>
           <label for="l1">L1 (ma langue)</label>
@@ -354,8 +479,8 @@
     </section>
 
     <section id="import">
-      <h2>3. Documents du cours actif</h2>
-      <p class="meta">Plusieurs PDFs dans ce cours. Glossaire, fiches et quiz agrègent les textes <strong>de ce cours uniquement</strong>.</p>
+      <h2>Documents</h2>
+      <p class="meta">Plusieurs PDFs dans ce cours. Glossaire, fiches et quiz agrègent les textes de ce cours uniquement.</p>
       <label for="pdf">Ajouter un PDF (texte extractible)</label>
       <input type="file" id="pdf" accept="application/pdf,.pdf" />
       <div class="actions">
@@ -379,7 +504,7 @@
     </section>
 
     <section id="fichesSection">
-      <h2>4. Mes fiches</h2>
+      <h2>Mes fiches</h2>
       <p class="meta" id="fichesCountLabel">Aucune fiche pour l’instant.</p>
       <div class="actions">
         <button type="button" id="fichesBtn">Générer fiches</button>
@@ -429,7 +554,7 @@
     </section>
 
     <section id="generate">
-      <h2>5. Quiz du cours</h2>
+      <h2>Quiz</h2>
       <div id="quizLaunch">
         <p>Questions tirées du corpus de tous les PDFs du cours.</p>
         <p class="meta">Ordre aléatoire à chaque tentative · couverture : ensemble des documents.</p>
@@ -452,7 +577,7 @@
     </section>
 
     <section id="progression">
-      <h2>6. Progression</h2>
+      <h2>Progression</h2>
       <div class="prog-block">
         <h3>Lecture</h3>
         <div class="value" id="progPages">Pages ouvertes : 0 / 0</div>
@@ -477,7 +602,9 @@
       </div>
       <div id="progMsg" class="meta"></div>
     </section>
-  </main>
+      </div><!-- .hub-stack -->
+    </div><!-- #viewHub -->
+  </div><!-- .app-shell -->
 
   <div id="selMenu" role="dialog" aria-label="Menu sélection">
     <div class="sel-term" id="selTerm"></div>
@@ -498,6 +625,8 @@
     let currentPage = 1;
     let activeDocId = null;
     let activeCourseId = null;
+    let hubOpen = false;
+    let coursesCache = [];
     let lastSelection = "";
     let menuPinned = false;
     let quizQuestions = [];
@@ -528,6 +657,25 @@
         .replace(/"/g, "&quot;");
     }
 
+    function showHome() {
+      hubOpen = false;
+      $("viewHome").classList.add("active");
+      $("viewHub").classList.remove("active");
+      $("homeBrand").style.display = "";
+      hideMenu();
+    }
+
+    function showHub(course) {
+      hubOpen = true;
+      $("viewHome").classList.remove("active");
+      $("viewHub").classList.add("active");
+      $("homeBrand").style.display = "none";
+      if (course) {
+        $("hubTitle").textContent = course.title || "Cours";
+        $("hubSubtitle").textContent = course.subtitle || "";
+      }
+    }
+
     async function refreshStatus() {
       try {
         const s = await api("/api/status");
@@ -535,15 +683,24 @@
         if (s.provider === "stub") {
           label = "LLM: STUB (démo — pas de Groq/Ollama)";
         } else if (s.groq_key_present) {
-          label = `LLM: Groq (${s.provider})`;
+          const src = s.groq_key_env ? ` via ${s.groq_key_env}` : "";
+          label = `LLM: Groq${src}`;
         } else {
-          label = `LLM: ${s.provider} (pas de GROQ_API_KEY — Ollama)`;
+          label = `LLM: ${s.provider} (pas de GROQ_API_KEY / Etude)`;
         }
         $("provider").textContent = label;
         if (s.course?.l1) $("l1").value = s.course.l1;
         if (s.course?.l2) $("l2").value = s.course.l2;
         activeCourseId = s.course?.id || s.active_course?.id || null;
-        renderCourses(s.courses || [], s.active_course || s.course);
+        coursesCache = s.courses || [];
+        renderCourses(coursesCache);
+        if (!hubOpen) return;
+
+        const active = s.active_course || s.course;
+        if (active) {
+          $("hubTitle").textContent = active.title || "Cours";
+          $("hubSubtitle").textContent = active.subtitle || "";
+        }
         renderDocuments(s.documents || [], s.active_document);
         if (s.active_document?.has_pdf) {
           activeDocId = s.active_document.id;
@@ -562,42 +719,52 @@
       }
     }
 
-    function renderCourses(courses, active) {
+    function renderCourses(courses) {
       const el = $("coursesList");
-      if (!courses.length) {
-        el.innerHTML = `<div class="empty-state"><p>Aucun cours — créez-en un.</p></div>`;
+      const q = ($("courseSearch").value || "").trim().toLowerCase();
+      const filtered = !q
+        ? courses
+        : courses.filter((c) => {
+            const hay = `${c.title || ""} ${c.subtitle || ""} ${c.l1 || ""} ${c.l2 || ""}`.toLowerCase();
+            return hay.includes(q);
+          });
+      if (!filtered.length) {
+        el.innerHTML = `<div class="empty-state"><p>${courses.length ? "Aucun résultat." : "Aucun cours — créez-en un."}</p></div>`;
         return;
       }
-      el.innerHTML = courses.map((c) => {
-        const isActive = active && c.id === active.id;
-        const langs = [c.l1, c.l2].filter(Boolean).join(" ← ") || "langues non définies";
-        return `<div class="fiche-row" data-course-id="${c.id}" style="cursor:default">
-          <div class="preview">
-            <strong>${escapeHtml(c.title)}${isActive ? " · actif" : ""}</strong>
-            <div class="sub">${escapeHtml(langs)} · ${c.char_count || 0} car. corpus</div>
+      el.innerHTML = filtered.map((c) => {
+        const sub = c.subtitle || ([c.l1, c.l2].filter(Boolean).join(" ← ") || "Langues non définies");
+        const letter = (c.title || "?").trim().charAt(0).toUpperCase() || "?";
+        return `<button type="button" class="course-card" data-id="${c.id}">
+          <div class="course-icon" aria-hidden="true">${escapeHtml(letter)}</div>
+          <div class="text">
+            <strong>${escapeHtml(c.title)}</strong>
+            <div class="sub">${escapeHtml(sub)}</div>
           </div>
-          <div class="actions" style="margin:0; flex-shrink:0">
-            ${isActive
-              ? `<span class="status-pill">cours actif</span>`
-              : `<button type="button" class="secondary course-switch" data-id="${c.id}">Basculer</button>`}
-          </div>
-        </div>`;
+        </button>`;
       }).join("");
-      el.querySelectorAll(".course-switch").forEach((btn) => {
-        btn.onclick = () => switchCourse(Number(btn.dataset.id));
+      el.querySelectorAll(".course-card").forEach((btn) => {
+        btn.onclick = () => enterCourse(Number(btn.dataset.id));
       });
     }
 
-    async function switchCourse(id) {
+    async function enterCourse(id) {
       try {
         const data = await api(`/api/courses/${id}/activate`, { method: "PUT" });
         activeCourseId = data.course?.id || id;
-        setMsg($("courseMsg"), `Cours actif : ${data.course?.title || id}`, true);
+        showHub(data.course);
         await refreshStatus();
       } catch (e) {
         setMsg($("courseMsg"), e.message, false);
       }
     }
+
+    $("backToCourses").onclick = () => {
+      showHome();
+      renderCourses(coursesCache);
+    };
+
+    $("courseSearch").oninput = () => renderCourses(coursesCache);
 
     $("createCourseBtn").onclick = async () => {
       const title = ($("newCourseTitle").value || "").trim();
@@ -605,8 +772,8 @@
       try {
         const body = {
           title,
-          l1: $("l1").value,
-          l2: $("l2").value,
+          l1: $("l1").value || "fr",
+          l2: $("l2").value || "en",
         };
         const data = await api("/api/courses", {
           method: "POST",
@@ -614,7 +781,8 @@
           body: JSON.stringify(body),
         });
         $("newCourseTitle").value = "";
-        setMsg($("courseMsg"), `Créé et activé : ${data.course?.title}`, true);
+        setMsg($("courseMsg"), "", true);
+        showHub(data.course);
         await refreshStatus();
       } catch (e) {
         setMsg($("courseMsg"), e.message, false);

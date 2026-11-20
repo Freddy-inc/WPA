@@ -68,6 +68,8 @@ struct Health {
     ok: bool,
     provider: String,
     groq_key_present: bool,
+    /// Which env name held the key: `GROQ_API_KEY` | `Etude` | null. Never the secret.
+    groq_key_env: Option<String>,
     stub: bool,
 }
 
@@ -76,22 +78,41 @@ async fn health(State(st): State<Arc<AppState>>) -> Json<Health> {
         ok: true,
         provider: st.llm.provider_label().into(),
         groq_key_present: st.llm.has_groq_key(),
+        groq_key_env: st.llm.groq_key_env_name().map(|s| s.to_string()),
         stub: st.llm.is_stub(),
     })
 }
 
-fn course_summary(c: &crate::db::CourseRow) -> serde_json::Value {
-    json!({
+async fn course_summary_async(
+    st: &AppState,
+    c: &crate::db::CourseRow,
+) -> Result<serde_json::Value, ApiError> {
+    let docs = st.db.list_documents(c.id).await.map_err(ApiError::from)?;
+    let langs = match (&c.l1, &c.l2) {
+        (Some(a), Some(b)) => format!("{a} ← {b}"),
+        _ => "Langues non définies".to_string(),
+    };
+    let n = docs.len();
+    let subtitle = if n == 0 {
+        format!("{langs} · aucun PDF")
+    } else if n == 1 {
+        format!("{langs} · 1 document")
+    } else {
+        format!("{langs} · {n} documents")
+    };
+    Ok(json!({
         "id": c.id,
         "title": c.title,
+        "subtitle": subtitle,
         "filename": c.filename,
         "char_count": c.text.chars().count(),
+        "docs_count": n,
         "l1": c.l1,
         "l2": c.l2,
         "active": c.active,
         "has_text": !c.text.trim().is_empty(),
         "created_at": c.created_at,
-    })
+    }))
 }
 
 fn doc_summary(d: &crate::db::DocumentRow, st: &AppState) -> serde_json::Value {
@@ -133,12 +154,21 @@ async fn status(State(st): State<Arc<AppState>>) -> Result<Json<serde_json::Valu
 
     let docs_json: Vec<_> = docs.iter().map(|d| doc_summary(d, &st)).collect();
     let active_json = active.as_ref().map(|d| doc_summary(d, &st));
+    let mut courses_json = Vec::with_capacity(courses.len());
+    for c in &courses {
+        courses_json.push(course_summary_async(&st, c).await?);
+    }
+    let active_course_json = match &course {
+        Some(c) => Some(course_summary_async(&st, c).await?),
+        None => None,
+    };
 
     Ok(Json(json!({
         "provider": st.llm.provider_label(),
         "groq_key_present": st.llm.has_groq_key(),
-        "courses": courses.iter().map(course_summary).collect::<Vec<_>>(),
-        "active_course": course.as_ref().map(course_summary),
+        "groq_key_env": st.llm.groq_key_env_name(),
+        "courses": courses_json,
+        "active_course": active_course_json,
         "course": course.as_ref().map(|c| json!({
             "id": c.id,
             "title": c.title,
@@ -176,8 +206,12 @@ async fn list_courses(
     State(st): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let courses = st.db.list_courses().await.map_err(ApiError::from)?;
+    let mut courses_json = Vec::with_capacity(courses.len());
+    for c in &courses {
+        courses_json.push(course_summary_async(&st, c).await?);
+    }
     Ok(Json(json!({
-        "courses": courses.iter().map(course_summary).collect::<Vec<_>>(),
+        "courses": courses_json,
         "count": courses.len(),
         "active_course_id": courses.iter().find(|c| c.active).map(|c| c.id),
     })))
@@ -206,10 +240,14 @@ async fn create_course(
         .await
         .map_err(|e| ApiError::bad(e.to_string()))?;
     let courses = st.db.list_courses().await.map_err(ApiError::from)?;
+    let mut courses_json = Vec::with_capacity(courses.len());
+    for c in &courses {
+        courses_json.push(course_summary_async(&st, c).await?);
+    }
     Ok(Json(json!({
         "ok": true,
-        "course": course_summary(&course),
-        "courses": courses.iter().map(course_summary).collect::<Vec<_>>(),
+        "course": course_summary_async(&st, &course).await?,
+        "courses": courses_json,
     })))
 }
 
@@ -228,7 +266,7 @@ async fn update_course(
         .rename_course(id, &body.title)
         .await
         .map_err(|e| ApiError::bad(e.to_string()))?;
-    Ok(Json(json!({ "ok": true, "course": course_summary(&course) })))
+    Ok(Json(json!({ "ok": true, "course": course_summary_async(&st, &course).await? })))
 }
 
 async fn activate_course(
@@ -250,7 +288,7 @@ async fn activate_course(
     }
     Ok(Json(json!({
         "ok": true,
-        "course": course_summary(&course),
+        "course": course_summary_async(&st, &course).await?,
         "documents": docs.iter().map(|d| doc_summary(d, &st)).collect::<Vec<_>>(),
         "active_document": active.as_ref().map(|d| doc_summary(d, &st)),
         "progression": st.db.progression_snapshot().await.map_err(ApiError::from)?,
@@ -271,10 +309,18 @@ async fn delete_course(
         .map_err(|e| ApiError::bad(e.to_string()))?;
     let courses = st.db.list_courses().await.map_err(ApiError::from)?;
     let active = st.db.active_course().await.map_err(ApiError::from)?;
+    let mut courses_json = Vec::with_capacity(courses.len());
+    for c in &courses {
+        courses_json.push(course_summary_async(&st, c).await?);
+    }
+    let active_json = match &active {
+        Some(c) => Some(course_summary_async(&st, c).await?),
+        None => None,
+    };
     Ok(Json(json!({
         "ok": true,
-        "courses": courses.iter().map(course_summary).collect::<Vec<_>>(),
-        "active_course": active.as_ref().map(course_summary),
+        "courses": courses_json,
+        "active_course": active_json,
     })))
 }
 

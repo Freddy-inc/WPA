@@ -19,6 +19,8 @@ pub enum ModelRole {
 #[derive(Debug, Clone)]
 pub struct LlmConfig {
     pub groq_api_key: Option<String>,
+    /// Which env var supplied the Groq key: `"GROQ_API_KEY"` | `"Etude"` | none.
+    pub groq_key_env: Option<&'static str>,
     pub groq_interactive_model: String,
     pub groq_batch_model: String,
     pub ollama_base: String,
@@ -27,14 +29,35 @@ pub struct LlmConfig {
     pub force_stub: bool,
 }
 
+/// Resolve Groq API key: prefer `GROQ_API_KEY`, else fallback `Etude`. Never log the value.
+pub fn resolve_groq_key() -> (Option<String>, Option<&'static str>) {
+    let from_groq = std::env::var("GROQ_API_KEY")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|k| !k.is_empty());
+    if from_groq.is_some() {
+        return (from_groq, Some("GROQ_API_KEY"));
+    }
+    let from_etude = std::env::var("Etude")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|k| !k.is_empty());
+    if from_etude.is_some() {
+        return (from_etude, Some("Etude"));
+    }
+    (None, None)
+}
+
 impl Default for LlmConfig {
     fn default() -> Self {
         let force_stub = matches!(
             std::env::var("THOT_LLM_STUB").as_deref(),
             Ok("1") | Ok("true") | Ok("yes")
         );
+        let (groq_api_key, groq_key_env) = resolve_groq_key();
         Self {
-            groq_api_key: std::env::var("GROQ_API_KEY").ok().filter(|k| !k.is_empty()),
+            groq_api_key,
+            groq_key_env,
             groq_interactive_model: std::env::var("THOT_GROQ_INTERACTIVE_MODEL")
                 .unwrap_or_else(|_| "openai/gpt-oss-20b".into()),
             groq_batch_model: std::env::var("THOT_GROQ_BATCH_MODEL")
@@ -115,6 +138,11 @@ impl LlmClient {
 
     pub fn has_groq_key(&self) -> bool {
         self.config.groq_api_key.is_some()
+    }
+
+    /// Env var name that provided the Groq key (`GROQ_API_KEY` or `Etude`), if any.
+    pub fn groq_key_env_name(&self) -> Option<&'static str> {
+        self.config.groq_key_env
     }
 
     pub fn is_stub(&self) -> bool {

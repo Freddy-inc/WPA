@@ -50,6 +50,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(
         provider = llm.provider_label(),
         groq = llm.has_groq_key(),
+        groq_key_env = llm.groq_key_env_name().unwrap_or("none"),
         "LLM client ready"
     );
 

@@ -6,7 +6,7 @@ Rust (`axum`) backend + HTML demo for the Thot study loop:
 
 Many independent courses. Each course owns its documents, glossary cache, fiches, quiz, and progression. Within a course: many PDFs; glossary / fiches / quiz span that course's corpus only.
 
-Free AI only: **Groq** when `GROQ_API_KEY` is set, otherwise **Ollama** (OpenAI-compatible). Stub mode for demos without either.
+Free AI only: **Groq** when `GROQ_API_KEY` or fallback env `Etude` is set (prefer `GROQ_API_KEY` if both), otherwise **Ollama**. Stub mode for demos without either. Health reports which env name was present — never the secret.
 
 This folder is isolated from the existing WPA static site.
 
@@ -35,7 +35,8 @@ Open **http://127.0.0.1:8787/**
 
 | Env | Default | Meaning |
 | --- | --- | --- |
-| `GROQ_API_KEY` | _(empty)_ | Groq primary; absent → Ollama |
+| `GROQ_API_KEY` | _(empty)_ | Groq primary (preferred) |
+| `Etude` | _(empty)_ | Groq key fallback if `GROQ_API_KEY` absent |
 | `THOT_PORT` | `8787` | HTTP port |
 | `THOT_DATA_DIR` | `data` | SQLite + `docs/{id}.pdf` |
 | `THOT_GROQ_INTERACTIVE_MODEL` | `openai/gpt-oss-20b` | Glossary model |
