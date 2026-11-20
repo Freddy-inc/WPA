@@ -1,4 +1,4 @@
-//! SQLite persistence: one course, many docs, glossary, fiches, quiz, reading.
+//! SQLite: many courses; each has docs, glossary, fiches, quiz, progression.
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -13,16 +13,19 @@ pub struct Db {
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct CourseRow {
     pub id: i64,
+    pub title: String,
     pub filename: String,
     pub text: String,
     pub l1: Option<String>,
     pub l2: Option<String>,
+    pub active: bool,
     pub created_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct DocumentRow {
     pub id: i64,
+    pub course_id: i64,
     pub filename: String,
     pub text: String,
     pub total_pages: i64,
@@ -33,6 +36,7 @@ pub struct DocumentRow {
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct GlossaryRow {
     pub id: i64,
+    pub course_id: i64,
     pub term_l2: String,
     pub meaning_l1: String,
     pub context_snippet: Option<String>,
@@ -45,6 +49,7 @@ pub struct GlossaryRow {
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct FicheRow {
     pub id: i64,
+    pub course_id: i64,
     pub front: String,
     pub back: String,
     pub edited: bool,
@@ -53,7 +58,7 @@ pub struct FicheRow {
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct QuizRow {
-    pub id: i64,
+    pub course_id: i64,
     pub questions_json: String,
     pub created_at: String,
 }
@@ -81,16 +86,44 @@ impl Db {
     async fn migrate(&self) -> Result<()> {
         sqlx::query(
             r#"
-            CREATE TABLE IF NOT EXISTS course (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                filename TEXT NOT NULL,
-                text TEXT NOT NULL,
+            CREATE TABLE IF NOT EXISTS schema_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        let version: Option<(String,)> =
+            sqlx::query_as("SELECT value FROM schema_meta WHERE key = 'version'")
+                .fetch_optional(&self.pool)
+                .await?;
+        let ver = version
+            .as_ref()
+            .and_then(|(v,)| v.parse::<i64>().ok())
+            .unwrap_or(0);
+
+        if ver < 2 {
+            self.migrate_to_v2().await?;
+        }
+
+        // Ensure tables exist (fresh install or after v2).
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS courses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                filename TEXT NOT NULL DEFAULT '',
+                text TEXT NOT NULL DEFAULT '',
                 l1 TEXT,
                 l2 TEXT,
+                active INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS documents (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                course_id INTEGER NOT NULL,
                 filename TEXT NOT NULL,
                 text TEXT NOT NULL,
                 total_pages INTEGER NOT NULL DEFAULT 0,
@@ -99,6 +132,7 @@ impl Db {
             );
             CREATE TABLE IF NOT EXISTS glossary (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                course_id INTEGER NOT NULL,
                 term_l2 TEXT NOT NULL COLLATE NOCASE,
                 meaning_l1 TEXT NOT NULL,
                 context_snippet TEXT,
@@ -106,148 +140,661 @@ impl Db {
                 verified INTEGER NOT NULL DEFAULT 0,
                 confidence REAL NOT NULL DEFAULT 0.0,
                 created_at TEXT NOT NULL,
-                UNIQUE(term_l2)
+                UNIQUE(course_id, term_l2)
             );
             CREATE TABLE IF NOT EXISTS fiches (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                course_id INTEGER NOT NULL,
                 front TEXT NOT NULL,
                 back TEXT NOT NULL,
                 edited INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS quiz (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
+                course_id INTEGER PRIMARY KEY,
                 questions_json TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS quiz_attempts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                course_id INTEGER NOT NULL,
                 score INTEGER NOT NULL,
                 total INTEGER NOT NULL,
                 created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS pages_opened (
+                doc_id INTEGER NOT NULL,
+                page INTEGER NOT NULL CHECK (page >= 1),
+                PRIMARY KEY (doc_id, page)
             );
             "#,
         )
         .execute(&self.pool)
         .await?;
 
-        self.migrate_pages_opened().await?;
-
-        // One-time migrate from legacy single-PDF course row into documents.
-        let doc_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM documents")
-            .fetch_one(&self.pool)
-            .await?;
-        if doc_count.0 == 0 {
-            if let Some(c) = self.get_course_raw().await? {
-                if !c.filename.is_empty() && !c.text.trim().is_empty() {
-                    sqlx::query(
-                        "INSERT INTO documents (filename, text, total_pages, active, created_at)
-                         VALUES (?, ?, 0, 1, ?)",
-                    )
-                    .bind(&c.filename)
-                    .bind(&c.text)
-                    .bind(&c.created_at)
-                    .execute(&self.pool)
-                    .await?;
-                }
-            }
-        }
-        // Keep corpus denormalized in sync.
-        let _ = self.refresh_course_corpus().await;
-        Ok(())
-    }
-
-    /// Ensure pages_opened is (doc_id, page). Rebuild if legacy single-column schema.
-    async fn migrate_pages_opened(&self) -> Result<()> {
-        let exists: Option<(String,)> = sqlx::query_as(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='pages_opened'",
-        )
-        .fetch_optional(&self.pool)
-        .await?;
-        if exists.is_none() {
-            sqlx::query(
-                "CREATE TABLE pages_opened (
-                    doc_id INTEGER NOT NULL,
-                    page INTEGER NOT NULL CHECK (page >= 1),
-                    PRIMARY KEY (doc_id, page)
-                )",
-            )
-            .execute(&self.pool)
-            .await?;
-            return Ok(());
-        }
-        let cols: Vec<(String,)> =
-            sqlx::query_as("SELECT name FROM pragma_table_info('pages_opened')")
-                .fetch_all(&self.pool)
-                .await?;
-        let names: Vec<String> = cols.into_iter().map(|(n,)| n).collect();
-        if names.iter().any(|n| n == "doc_id") {
-            return Ok(());
-        }
-        // Legacy: PRIMARY KEY (page) only — drop; reopen tracking starts fresh per doc.
-        sqlx::query("DROP TABLE pages_opened")
-            .execute(&self.pool)
-            .await?;
         sqlx::query(
-            "CREATE TABLE pages_opened (
-                doc_id INTEGER NOT NULL,
-                page INTEGER NOT NULL CHECK (page >= 1),
-                PRIMARY KEY (doc_id, page)
-            )",
+            "INSERT INTO schema_meta (key, value) VALUES ('version', '2')
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         )
         .execute(&self.pool)
         .await?;
+
+        // Ensure at least one course exists.
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM courses")
+            .fetch_one(&self.pool)
+            .await?;
+        if count.0 == 0 {
+            let _ = self
+                .create_course("Cours 1", Some("fr"), Some("en"))
+                .await?;
+        } else if self.active_course().await?.is_none() {
+            if let Some(c) = self.list_courses().await?.into_iter().next() {
+                let _ = self.set_active_course(c.id).await?;
+            }
+        }
         Ok(())
     }
 
-    async fn get_course_raw(&self) -> Result<Option<CourseRow>> {
-        let row = sqlx::query_as::<_, CourseRow>(
-            "SELECT id, filename, text, l1, l2, created_at FROM course WHERE id = 1",
+    /// Rebuild from legacy singleton `course` / unscoped tables into multi-course v2.
+    async fn migrate_to_v2(&self) -> Result<()> {
+        // Snapshot legacy data if present.
+        let has_legacy_course: Option<(String,)> = sqlx::query_as(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='course'",
         )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let mut legacy_title = "Cours 1".to_string();
+        let mut legacy_l1: Option<String> = None;
+        let mut legacy_l2: Option<String> = None;
+        let mut legacy_filename = String::new();
+        let mut legacy_text = String::new();
+        let mut legacy_created = now_iso();
+
+        if has_legacy_course.is_some() {
+            #[derive(FromRow)]
+            struct OldCourse {
+                filename: String,
+                text: String,
+                l1: Option<String>,
+                l2: Option<String>,
+                created_at: String,
+            }
+            if let Ok(Some(c)) = sqlx::query_as::<_, OldCourse>(
+                "SELECT filename, text, l1, l2, created_at FROM course WHERE id = 1",
+            )
+            .fetch_optional(&self.pool)
+            .await
+            {
+                legacy_filename = c.filename;
+                legacy_text = c.text;
+                legacy_l1 = c.l1;
+                legacy_l2 = c.l2;
+                legacy_created = c.created_at;
+                if !legacy_filename.is_empty() {
+                    legacy_title = legacy_filename.clone();
+                }
+            }
+        }
+
+        // Docs without course_id
+        #[derive(FromRow)]
+        struct OldDoc {
+            id: i64,
+            filename: String,
+            text: String,
+            total_pages: i64,
+            active: bool,
+            created_at: String,
+        }
+        let old_docs: Vec<OldDoc> = {
+            let has_docs: Option<(String,)> = sqlx::query_as(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='documents'",
+            )
+            .fetch_optional(&self.pool)
+            .await?;
+            if has_docs.is_some() {
+                let cols: Vec<(String,)> =
+                    sqlx::query_as("SELECT name FROM pragma_table_info('documents')")
+                        .fetch_all(&self.pool)
+                        .await
+                        .unwrap_or_default();
+                let names: Vec<_> = cols.into_iter().map(|(n,)| n).collect();
+                if names.iter().any(|n| n == "course_id") {
+                    Vec::new() // already v2-shaped
+                } else {
+                    sqlx::query_as::<_, OldDoc>(
+                        "SELECT id, filename, text, total_pages, active, created_at FROM documents ORDER BY id",
+                    )
+                    .fetch_all(&self.pool)
+                    .await
+                    .unwrap_or_default()
+                }
+            } else {
+                Vec::new()
+            }
+        };
+
+        #[derive(FromRow)]
+        struct OldGloss {
+            term_l2: String,
+            meaning_l1: String,
+            context_snippet: Option<String>,
+            sources_json: String,
+            verified: bool,
+            confidence: f64,
+            created_at: String,
+        }
+        let old_gloss: Vec<OldGloss> = {
+            let has: Option<(String,)> = sqlx::query_as(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='glossary'",
+            )
+            .fetch_optional(&self.pool)
+            .await?;
+            if has.is_none() {
+                Vec::new()
+            } else {
+                let cols: Vec<(String,)> =
+                    sqlx::query_as("SELECT name FROM pragma_table_info('glossary')")
+                        .fetch_all(&self.pool)
+                        .await
+                        .unwrap_or_default();
+                if cols.iter().any(|(n,)| n == "course_id") {
+                    Vec::new()
+                } else {
+                    sqlx::query_as(
+                        "SELECT term_l2, meaning_l1, context_snippet, sources_json, verified, confidence, created_at FROM glossary",
+                    )
+                    .fetch_all(&self.pool)
+                    .await
+                    .unwrap_or_default()
+                }
+            }
+        };
+
+        #[derive(FromRow)]
+        struct OldFiche {
+            front: String,
+            back: String,
+            edited: bool,
+            created_at: String,
+        }
+        let old_fiches: Vec<OldFiche> = {
+            let has: Option<(String,)> = sqlx::query_as(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='fiches'",
+            )
+            .fetch_optional(&self.pool)
+            .await?;
+            if has.is_none() {
+                Vec::new()
+            } else {
+                let cols: Vec<(String,)> =
+                    sqlx::query_as("SELECT name FROM pragma_table_info('fiches')")
+                        .fetch_all(&self.pool)
+                        .await
+                        .unwrap_or_default();
+                if cols.iter().any(|(n,)| n == "course_id") {
+                    Vec::new()
+                } else {
+                    sqlx::query_as(
+                        "SELECT front, back, edited, created_at FROM fiches ORDER BY id",
+                    )
+                    .fetch_all(&self.pool)
+                    .await
+                    .unwrap_or_default()
+                }
+            }
+        };
+
+        let old_quiz_json: Option<(String, String)> = {
+            let has: Option<(String,)> = sqlx::query_as(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='quiz'",
+            )
+            .fetch_optional(&self.pool)
+            .await?;
+            if has.is_none() {
+                None
+            } else {
+                let cols: Vec<(String,)> =
+                    sqlx::query_as("SELECT name FROM pragma_table_info('quiz')")
+                        .fetch_all(&self.pool)
+                        .await
+                        .unwrap_or_default();
+                if cols.iter().any(|(n,)| n == "course_id") && !cols.iter().any(|(n,)| n == "id") {
+                    None
+                } else {
+                    sqlx::query_as("SELECT questions_json, created_at FROM quiz LIMIT 1")
+                        .fetch_optional(&self.pool)
+                        .await
+                        .ok()
+                        .flatten()
+                }
+            }
+        };
+
+        #[derive(FromRow)]
+        struct OldAttempt {
+            score: i64,
+            total: i64,
+            created_at: String,
+        }
+        let old_attempts: Vec<OldAttempt> = {
+            let has: Option<(String,)> = sqlx::query_as(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='quiz_attempts'",
+            )
+            .fetch_optional(&self.pool)
+            .await?;
+            if has.is_none() {
+                Vec::new()
+            } else {
+                let cols: Vec<(String,)> =
+                    sqlx::query_as("SELECT name FROM pragma_table_info('quiz_attempts')")
+                        .fetch_all(&self.pool)
+                        .await
+                        .unwrap_or_default();
+                if cols.iter().any(|(n,)| n == "course_id") {
+                    Vec::new()
+                } else {
+                    sqlx::query_as(
+                        "SELECT score, total, created_at FROM quiz_attempts ORDER BY id",
+                    )
+                    .fetch_all(&self.pool)
+                    .await
+                    .unwrap_or_default()
+                }
+            }
+        };
+
+        #[derive(FromRow)]
+        struct OldPage {
+            doc_id: i64,
+            page: i64,
+        }
+        let old_pages: Vec<OldPage> = {
+            let has: Option<(String,)> = sqlx::query_as(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='pages_opened'",
+            )
+            .fetch_optional(&self.pool)
+            .await?;
+            if has.is_none() {
+                Vec::new()
+            } else {
+                let cols: Vec<(String,)> =
+                    sqlx::query_as("SELECT name FROM pragma_table_info('pages_opened')")
+                        .fetch_all(&self.pool)
+                        .await
+                        .unwrap_or_default();
+                if cols.iter().any(|(n,)| n == "doc_id") {
+                    sqlx::query_as("SELECT doc_id, page FROM pages_opened")
+                        .fetch_all(&self.pool)
+                        .await
+                        .unwrap_or_default()
+                } else {
+                    Vec::new()
+                }
+            }
+        };
+
+        // Drop old tables and recreate v2.
+        for t in [
+            "pages_opened",
+            "quiz_attempts",
+            "quiz",
+            "fiches",
+            "glossary",
+            "documents",
+            "course",
+            "courses",
+        ] {
+            sqlx::query(&format!("DROP TABLE IF EXISTS {t}"))
+                .execute(&self.pool)
+                .await?;
+        }
+
+        sqlx::query(
+            r#"
+            CREATE TABLE courses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                filename TEXT NOT NULL DEFAULT '',
+                text TEXT NOT NULL DEFAULT '',
+                l1 TEXT,
+                l2 TEXT,
+                active INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE documents (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                course_id INTEGER NOT NULL,
+                filename TEXT NOT NULL,
+                text TEXT NOT NULL,
+                total_pages INTEGER NOT NULL DEFAULT 0,
+                active INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE glossary (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                course_id INTEGER NOT NULL,
+                term_l2 TEXT NOT NULL COLLATE NOCASE,
+                meaning_l1 TEXT NOT NULL,
+                context_snippet TEXT,
+                sources_json TEXT NOT NULL,
+                verified INTEGER NOT NULL DEFAULT 0,
+                confidence REAL NOT NULL DEFAULT 0.0,
+                created_at TEXT NOT NULL,
+                UNIQUE(course_id, term_l2)
+            );
+            CREATE TABLE fiches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                course_id INTEGER NOT NULL,
+                front TEXT NOT NULL,
+                back TEXT NOT NULL,
+                edited INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE quiz (
+                course_id INTEGER PRIMARY KEY,
+                questions_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE quiz_attempts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                course_id INTEGER NOT NULL,
+                score INTEGER NOT NULL,
+                total INTEGER NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE pages_opened (
+                doc_id INTEGER NOT NULL,
+                page INTEGER NOT NULL CHECK (page >= 1),
+                PRIMARY KEY (doc_id, page)
+            );
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        let res = sqlx::query(
+            "INSERT INTO courses (title, filename, text, l1, l2, active, created_at)
+             VALUES (?, ?, ?, ?, ?, 1, ?)",
+        )
+        .bind(&legacy_title)
+        .bind(&legacy_filename)
+        .bind(&legacy_text)
+        .bind(&legacy_l1)
+        .bind(&legacy_l2)
+        .bind(&legacy_created)
+        .execute(&self.pool)
+        .await?;
+        let course_id = res.last_insert_rowid();
+
+        let mut id_map: Vec<(i64, i64)> = Vec::new();
+        for d in &old_docs {
+            let r = sqlx::query(
+                "INSERT INTO documents (course_id, filename, text, total_pages, active, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?)",
+            )
+            .bind(course_id)
+            .bind(&d.filename)
+            .bind(&d.text)
+            .bind(d.total_pages)
+            .bind(d.active)
+            .bind(&d.created_at)
+            .execute(&self.pool)
+            .await?;
+            id_map.push((d.id, r.last_insert_rowid()));
+        }
+        // If no docs but course had text, seed one virtual doc row is skipped — corpus stays on course.
+
+        for g in &old_gloss {
+            sqlx::query(
+                "INSERT OR IGNORE INTO glossary
+                 (course_id, term_l2, meaning_l1, context_snippet, sources_json, verified, confidence, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(course_id)
+            .bind(&g.term_l2)
+            .bind(&g.meaning_l1)
+            .bind(&g.context_snippet)
+            .bind(&g.sources_json)
+            .bind(g.verified)
+            .bind(g.confidence)
+            .bind(&g.created_at)
+            .execute(&self.pool)
+            .await?;
+        }
+        for f in &old_fiches {
+            sqlx::query(
+                "INSERT INTO fiches (course_id, front, back, edited, created_at) VALUES (?, ?, ?, ?, ?)",
+            )
+            .bind(course_id)
+            .bind(&f.front)
+            .bind(&f.back)
+            .bind(f.edited)
+            .bind(&f.created_at)
+            .execute(&self.pool)
+            .await?;
+        }
+        if let Some((qj, ca)) = &old_quiz_json {
+            sqlx::query(
+                "INSERT INTO quiz (course_id, questions_json, created_at) VALUES (?, ?, ?)",
+            )
+            .bind(course_id)
+            .bind(qj)
+            .bind(ca)
+            .execute(&self.pool)
+            .await?;
+        }
+        for a in &old_attempts {
+            sqlx::query(
+                "INSERT INTO quiz_attempts (course_id, score, total, created_at) VALUES (?, ?, ?, ?)",
+            )
+            .bind(course_id)
+            .bind(a.score)
+            .bind(a.total)
+            .bind(&a.created_at)
+            .execute(&self.pool)
+            .await?;
+        }
+        for p in &old_pages {
+            if let Some((_, new_id)) = id_map.iter().find(|(old, _)| *old == p.doc_id) {
+                sqlx::query("INSERT OR IGNORE INTO pages_opened (doc_id, page) VALUES (?, ?)")
+                    .bind(new_id)
+                    .bind(p.page)
+                    .execute(&self.pool)
+                    .await?;
+            }
+        }
+
+        let _ = self.refresh_course_corpus(course_id).await;
+        Ok(())
+    }
+
+    /* ---------- courses ---------- */
+
+    pub async fn list_courses(&self) -> Result<Vec<CourseRow>> {
+        let rows = sqlx::query_as::<_, CourseRow>(
+            "SELECT id, title, filename, text, l1, l2, active, created_at FROM courses ORDER BY id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    pub async fn get_course_by_id(&self, id: i64) -> Result<Option<CourseRow>> {
+        let row = sqlx::query_as::<_, CourseRow>(
+            "SELECT id, title, filename, text, l1, l2, active, created_at FROM courses WHERE id = ?",
+        )
+        .bind(id)
         .fetch_optional(&self.pool)
         .await?;
         Ok(row)
     }
 
-    pub async fn set_languages(&self, l1: &str, l2: &str) -> Result<()> {
-        let existing = self.get_course_raw().await?;
+    pub async fn active_course(&self) -> Result<Option<CourseRow>> {
+        let row = sqlx::query_as::<_, CourseRow>(
+            "SELECT id, title, filename, text, l1, l2, active, created_at FROM courses WHERE active = 1 LIMIT 1",
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        if row.is_some() {
+            return Ok(row);
+        }
+        Ok(self.list_courses().await?.into_iter().next())
+    }
+
+    pub async fn active_course_id(&self) -> Result<i64> {
+        self.active_course()
+            .await?
+            .map(|c| c.id)
+            .ok_or_else(|| anyhow::anyhow!("Aucun cours actif"))
+    }
+
+    pub async fn create_course(
+        &self,
+        title: &str,
+        l1: Option<&str>,
+        l2: Option<&str>,
+    ) -> Result<CourseRow> {
+        let title = title.trim();
+        if title.is_empty() {
+            return Err(anyhow::anyhow!("titre requis"));
+        }
         let now = now_iso();
-        if existing.is_some() {
-            sqlx::query("UPDATE course SET l1 = ?, l2 = ? WHERE id = 1")
-                .bind(l1)
-                .bind(l2)
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM courses")
+            .fetch_one(&self.pool)
+            .await?;
+        if count.0 == 0 {
+            // first course becomes active
+        } else {
+            // new course becomes active (switch into it)
+            sqlx::query("UPDATE courses SET active = 0")
                 .execute(&self.pool)
                 .await?;
-        } else {
-            sqlx::query(
-                "INSERT INTO course (id, filename, text, l1, l2, created_at) VALUES (1, '', '', ?, ?, ?)",
-            )
+        }
+        let res = sqlx::query(
+            "INSERT INTO courses (title, filename, text, l1, l2, active, created_at)
+             VALUES (?, '', '', ?, ?, 1, ?)",
+        )
+        .bind(title)
+        .bind(l1)
+        .bind(l2)
+        .bind(&now)
+        .execute(&self.pool)
+        .await?;
+        let id = res.last_insert_rowid();
+        // If this was first and we didn't clear, ensure only one active
+        sqlx::query("UPDATE courses SET active = 0 WHERE id != ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("UPDATE courses SET active = 1 WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        self.get_course_by_id(id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("course missing after create"))
+    }
+
+    pub async fn set_active_course(&self, id: i64) -> Result<CourseRow> {
+        if self.get_course_by_id(id).await?.is_none() {
+            return Err(anyhow::anyhow!("cours introuvable"));
+        }
+        sqlx::query("UPDATE courses SET active = 0")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("UPDATE courses SET active = 1 WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        self.get_course_by_id(id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("cours missing after activate"))
+    }
+
+    pub async fn delete_course(&self, id: i64) -> Result<()> {
+        let docs = self.list_documents(id).await?;
+        for d in &docs {
+            sqlx::query("DELETE FROM pages_opened WHERE doc_id = ?")
+                .bind(d.id)
+                .execute(&self.pool)
+                .await?;
+        }
+        sqlx::query("DELETE FROM documents WHERE course_id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM glossary WHERE course_id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM fiches WHERE course_id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM quiz WHERE course_id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM quiz_attempts WHERE course_id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        let was_active = self
+            .get_course_by_id(id)
+            .await?
+            .map(|c| c.active)
+            .unwrap_or(false);
+        sqlx::query("DELETE FROM courses WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        if was_active {
+            if let Some(next) = self.list_courses().await?.into_iter().next() {
+                let _ = self.set_active_course(next.id).await?;
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn set_languages(&self, l1: &str, l2: &str) -> Result<()> {
+        let id = self.active_course_id().await?;
+        sqlx::query("UPDATE courses SET l1 = ?, l2 = ? WHERE id = ?")
             .bind(l1)
             .bind(l2)
-            .bind(&now)
+            .bind(id)
             .execute(&self.pool)
             .await?;
-        }
         Ok(())
     }
 
-    async fn ensure_course_shell(&self) -> Result<()> {
-        if self.get_course_raw().await?.is_none() {
-            let now = now_iso();
-            sqlx::query(
-                "INSERT INTO course (id, filename, text, l1, l2, created_at) VALUES (1, '', '', NULL, NULL, ?)",
-            )
-            .bind(&now)
+    pub async fn rename_course(&self, id: i64, title: &str) -> Result<CourseRow> {
+        let title = title.trim();
+        if title.is_empty() {
+            return Err(anyhow::anyhow!("titre requis"));
+        }
+        sqlx::query("UPDATE courses SET title = ? WHERE id = ?")
+            .bind(title)
+            .bind(id)
             .execute(&self.pool)
             .await?;
-        }
-        Ok(())
+        self.get_course_by_id(id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("cours introuvable"))
     }
 
-    /// Refresh denormalized course.filename/text from all documents (corpus for IA).
-    pub async fn refresh_course_corpus(&self) -> Result<()> {
-        self.ensure_course_shell().await?;
-        let docs = self.list_documents().await?;
+    /// Active course view with refreshed corpus.
+    pub async fn get_course(&self) -> Result<Option<CourseRow>> {
+        let Some(c) = self.active_course().await? else {
+            return Ok(None);
+        };
+        let _ = self.refresh_course_corpus(c.id).await;
+        self.get_course_by_id(c.id).await
+    }
+
+    pub async fn refresh_course_corpus(&self, course_id: i64) -> Result<()> {
+        let docs = self.list_documents(course_id).await?;
         let text = docs
             .iter()
             .map(|d| format!("## {}\n{}", d.filename, d.text))
@@ -260,41 +807,51 @@ impl Db {
         } else {
             format!("{} documents", docs.len())
         };
-        sqlx::query("UPDATE course SET filename = ?, text = ? WHERE id = 1")
+        sqlx::query("UPDATE courses SET filename = ?, text = ? WHERE id = ?")
             .bind(&filename)
             .bind(&text)
+            .bind(course_id)
             .execute(&self.pool)
             .await?;
         Ok(())
     }
 
-    pub async fn add_document(&self, filename: &str, text: &str) -> Result<DocumentRow> {
-        self.ensure_course_shell().await?;
+    /* ---------- documents (scoped to a course) ---------- */
+
+    pub async fn add_document(
+        &self,
+        course_id: i64,
+        filename: &str,
+        text: &str,
+    ) -> Result<DocumentRow> {
         let now = now_iso();
-        // Newly imported PDF becomes the active reader target (user can switch later).
-        sqlx::query("UPDATE documents SET active = 0")
+        sqlx::query("UPDATE documents SET active = 0 WHERE course_id = ?")
+            .bind(course_id)
             .execute(&self.pool)
             .await?;
         let res = sqlx::query(
-            "INSERT INTO documents (filename, text, total_pages, active, created_at)
-             VALUES (?, ?, 0, 1, ?)",
+            "INSERT INTO documents (course_id, filename, text, total_pages, active, created_at)
+             VALUES (?, ?, ?, 0, 1, ?)",
         )
+        .bind(course_id)
         .bind(filename)
         .bind(text)
         .bind(&now)
         .execute(&self.pool)
         .await?;
         let id = res.last_insert_rowid();
-        self.refresh_course_corpus().await?;
+        self.refresh_course_corpus(course_id).await?;
         self.get_document(id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("document missing after insert"))
     }
 
-    pub async fn list_documents(&self) -> Result<Vec<DocumentRow>> {
+    pub async fn list_documents(&self, course_id: i64) -> Result<Vec<DocumentRow>> {
         let rows = sqlx::query_as::<_, DocumentRow>(
-            "SELECT id, filename, text, total_pages, active, created_at FROM documents ORDER BY id",
+            "SELECT id, course_id, filename, text, total_pages, active, created_at
+             FROM documents WHERE course_id = ? ORDER BY id",
         )
+        .bind(course_id)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows)
@@ -302,7 +859,8 @@ impl Db {
 
     pub async fn get_document(&self, id: i64) -> Result<Option<DocumentRow>> {
         let row = sqlx::query_as::<_, DocumentRow>(
-            "SELECT id, filename, text, total_pages, active, created_at FROM documents WHERE id = ?",
+            "SELECT id, course_id, filename, text, total_pages, active, created_at
+             FROM documents WHERE id = ?",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -310,26 +868,27 @@ impl Db {
         Ok(row)
     }
 
-    pub async fn active_document(&self) -> Result<Option<DocumentRow>> {
+    pub async fn active_document(&self, course_id: i64) -> Result<Option<DocumentRow>> {
         let row = sqlx::query_as::<_, DocumentRow>(
-            "SELECT id, filename, text, total_pages, active, created_at FROM documents WHERE active = 1 LIMIT 1",
+            "SELECT id, course_id, filename, text, total_pages, active, created_at
+             FROM documents WHERE course_id = ? AND active = 1 LIMIT 1",
         )
+        .bind(course_id)
         .fetch_optional(&self.pool)
         .await?;
         if row.is_some() {
             return Ok(row);
         }
-        // Fallback: first doc
-        let rows = self.list_documents().await?;
-        Ok(rows.into_iter().next())
+        Ok(self.list_documents(course_id).await?.into_iter().next())
     }
 
     pub async fn set_active_document(&self, id: i64) -> Result<DocumentRow> {
-        let exists = self.get_document(id).await?;
-        if exists.is_none() {
-            return Err(anyhow::anyhow!("document introuvable"));
-        }
-        sqlx::query("UPDATE documents SET active = 0")
+        let doc = self
+            .get_document(id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("document introuvable"))?;
+        sqlx::query("UPDATE documents SET active = 0 WHERE course_id = ?")
+            .bind(doc.course_id)
             .execute(&self.pool)
             .await?;
         sqlx::query("UPDATE documents SET active = 1 WHERE id = ?")
@@ -342,11 +901,12 @@ impl Db {
     }
 
     pub async fn delete_document(&self, id: i64) -> Result<()> {
-        let was_active = self
+        let doc = self
             .get_document(id)
             .await?
-            .map(|d| d.active)
-            .unwrap_or(false);
+            .ok_or_else(|| anyhow::anyhow!("document introuvable"))?;
+        let was_active = doc.active;
+        let course_id = doc.course_id;
         sqlx::query("DELETE FROM pages_opened WHERE doc_id = ?")
             .bind(id)
             .execute(&self.pool)
@@ -356,11 +916,11 @@ impl Db {
             .execute(&self.pool)
             .await?;
         if was_active {
-            if let Some(next) = self.list_documents().await?.into_iter().next() {
+            if let Some(next) = self.list_documents(course_id).await?.into_iter().next() {
                 let _ = self.set_active_document(next.id).await?;
             }
         }
-        self.refresh_course_corpus().await?;
+        self.refresh_course_corpus(course_id).await?;
         Ok(())
     }
 
@@ -378,18 +938,16 @@ impl Db {
         Ok(())
     }
 
-    /// Course view: languages + aggregated corpus (all docs).
-    pub async fn get_course(&self) -> Result<Option<CourseRow>> {
-        self.refresh_course_corpus().await.ok();
-        self.get_course_raw().await
-    }
+    /* ---------- glossary (active course) ---------- */
 
     pub async fn get_glossary(&self, term: &str) -> Result<Option<GlossaryRow>> {
+        let course_id = self.active_course_id().await?;
         let row = sqlx::query_as::<_, GlossaryRow>(
-            r#"SELECT id, term_l2, meaning_l1, context_snippet, sources_json,
+            r#"SELECT id, course_id, term_l2, meaning_l1, context_snippet, sources_json,
                       verified, confidence, created_at
-               FROM glossary WHERE term_l2 = ? COLLATE NOCASE"#,
+               FROM glossary WHERE course_id = ? AND term_l2 = ? COLLATE NOCASE"#,
         )
+        .bind(course_id)
         .bind(term.trim())
         .fetch_optional(&self.pool)
         .await?;
@@ -405,11 +963,12 @@ impl Db {
         verified: bool,
         confidence: f64,
     ) -> Result<GlossaryRow> {
+        let course_id = self.active_course_id().await?;
         let now = now_iso();
         sqlx::query(
-            r#"INSERT INTO glossary (term_l2, meaning_l1, context_snippet, sources_json, verified, confidence, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(term_l2) DO UPDATE SET
+            r#"INSERT INTO glossary (course_id, term_l2, meaning_l1, context_snippet, sources_json, verified, confidence, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(course_id, term_l2) DO UPDATE SET
                  meaning_l1 = excluded.meaning_l1,
                  context_snippet = excluded.context_snippet,
                  sources_json = excluded.sources_json,
@@ -417,6 +976,7 @@ impl Db {
                  confidence = excluded.confidence,
                  created_at = excluded.created_at"#,
         )
+        .bind(course_id)
         .bind(term_l2)
         .bind(meaning_l1)
         .bind(context_snippet)
@@ -431,13 +991,20 @@ impl Db {
             .ok_or_else(|| anyhow::anyhow!("glossary missing after put"))
     }
 
+    /* ---------- fiches ---------- */
+
     pub async fn replace_fiches(&self, fiches: &[(String, String)]) -> Result<Vec<FicheRow>> {
-        sqlx::query("DELETE FROM fiches").execute(&self.pool).await?;
+        let course_id = self.active_course_id().await?;
+        sqlx::query("DELETE FROM fiches WHERE course_id = ?")
+            .bind(course_id)
+            .execute(&self.pool)
+            .await?;
         let now = now_iso();
         for (front, back) in fiches {
             sqlx::query(
-                "INSERT INTO fiches (front, back, edited, created_at) VALUES (?, ?, 0, ?)",
+                "INSERT INTO fiches (course_id, front, back, edited, created_at) VALUES (?, ?, ?, 0, ?)",
             )
+            .bind(course_id)
             .bind(front)
             .bind(back)
             .bind(&now)
@@ -448,19 +1015,23 @@ impl Db {
     }
 
     pub async fn list_fiches(&self) -> Result<Vec<FicheRow>> {
+        let course_id = self.active_course_id().await?;
         let rows = sqlx::query_as::<_, FicheRow>(
-            "SELECT id, front, back, edited, created_at FROM fiches ORDER BY id",
+            "SELECT id, course_id, front, back, edited, created_at FROM fiches WHERE course_id = ? ORDER BY id",
         )
+        .bind(course_id)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows)
     }
 
     pub async fn get_fiche(&self, id: i64) -> Result<Option<FicheRow>> {
+        let course_id = self.active_course_id().await?;
         let row = sqlx::query_as::<_, FicheRow>(
-            "SELECT id, front, back, edited, created_at FROM fiches WHERE id = ?",
+            "SELECT id, course_id, front, back, edited, created_at FROM fiches WHERE id = ? AND course_id = ?",
         )
         .bind(id)
+        .bind(course_id)
         .fetch_optional(&self.pool)
         .await?;
         Ok(row)
@@ -472,24 +1043,32 @@ impl Db {
         if front.is_empty() || back.is_empty() {
             return Err(anyhow::anyhow!("recto et verso requis"));
         }
-        let res = sqlx::query("UPDATE fiches SET front = ?, back = ?, edited = 1 WHERE id = ?")
-            .bind(front)
-            .bind(back)
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
+        let course_id = self.active_course_id().await?;
+        let res = sqlx::query(
+            "UPDATE fiches SET front = ?, back = ?, edited = 1 WHERE id = ? AND course_id = ?",
+        )
+        .bind(front)
+        .bind(back)
+        .bind(id)
+        .bind(course_id)
+        .execute(&self.pool)
+        .await?;
         if res.rows_affected() == 0 {
             return Ok(None);
         }
         self.get_fiche(id).await
     }
 
+    /* ---------- quiz ---------- */
+
     pub async fn save_quiz(&self, questions_json: &str) -> Result<QuizRow> {
+        let course_id = self.active_course_id().await?;
         let now = now_iso();
         sqlx::query(
-            "INSERT INTO quiz (id, questions_json, created_at) VALUES (1, ?, ?)
-             ON CONFLICT(id) DO UPDATE SET questions_json = excluded.questions_json, created_at = excluded.created_at",
+            "INSERT INTO quiz (course_id, questions_json, created_at) VALUES (?, ?, ?)
+             ON CONFLICT(course_id) DO UPDATE SET questions_json = excluded.questions_json, created_at = excluded.created_at",
         )
+        .bind(course_id)
         .bind(questions_json)
         .bind(&now)
         .execute(&self.pool)
@@ -500,9 +1079,11 @@ impl Db {
     }
 
     pub async fn get_quiz(&self) -> Result<Option<QuizRow>> {
+        let course_id = self.active_course_id().await?;
         let row = sqlx::query_as::<_, QuizRow>(
-            "SELECT id, questions_json, created_at FROM quiz WHERE id = 1",
+            "SELECT course_id, questions_json, created_at FROM quiz WHERE course_id = ?",
         )
+        .bind(course_id)
         .fetch_optional(&self.pool)
         .await?;
         Ok(row)
@@ -529,10 +1110,12 @@ impl Db {
     }
 
     pub async fn record_quiz_attempt(&self, score: i64, total: i64) -> Result<()> {
+        let course_id = self.active_course_id().await?;
         let now = now_iso();
         sqlx::query(
-            "INSERT INTO quiz_attempts (score, total, created_at) VALUES (?, ?, ?)",
+            "INSERT INTO quiz_attempts (course_id, score, total, created_at) VALUES (?, ?, ?, ?)",
         )
+        .bind(course_id)
         .bind(score)
         .bind(total)
         .bind(&now)
@@ -542,19 +1125,24 @@ impl Db {
     }
 
     pub async fn quiz_attempt_stats(&self) -> Result<(i64, Option<(i64, i64)>)> {
-        let (attempts,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM quiz_attempts")
-            .fetch_one(&self.pool)
-            .await?;
+        let course_id = self.active_course_id().await?;
+        let (attempts,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM quiz_attempts WHERE course_id = ?")
+                .bind(course_id)
+                .fetch_one(&self.pool)
+                .await?;
         let last: Option<(i64, i64)> = sqlx::query_as(
-            "SELECT score, total FROM quiz_attempts ORDER BY id DESC LIMIT 1",
+            "SELECT score, total FROM quiz_attempts WHERE course_id = ? ORDER BY id DESC LIMIT 1",
         )
+        .bind(course_id)
         .fetch_optional(&self.pool)
         .await?;
         Ok((attempts, last))
     }
 
     pub async fn progression_snapshot(&self) -> Result<ProgressionSnapshot> {
-        let docs = self.list_documents().await?;
+        let course_id = self.active_course_id().await?;
+        let docs = self.list_documents(course_id).await?;
         let mut by_doc = Vec::new();
         let mut pages_opened = 0i64;
         let mut total_pages = 0i64;
@@ -577,6 +1165,7 @@ impl Db {
         let fiches = self.list_fiches().await?.len() as i64;
         let (attempts, last) = self.quiz_attempt_stats().await?;
         Ok(ProgressionSnapshot {
+            course_id,
             pages_opened,
             total_pages,
             pages: vec![],
@@ -601,6 +1190,7 @@ pub struct DocReadingProgress {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ProgressionSnapshot {
+    pub course_id: i64,
     pub pages_opened: i64,
     pub total_pages: i64,
     pub pages: Vec<i64>,

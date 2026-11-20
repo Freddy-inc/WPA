@@ -2,9 +2,9 @@
 
 Rust (`axum`) backend + HTML demo for the Thot study loop:
 
-**Import PDFs (same course) → switch documents → read rendered pages → selection → L1 sense → fiches *or* quiz on the full corpus.**
+**Create/switch courses → import PDFs (per course) → read → Sens → fiches *or* quiz.**
 
-One course, many documents. Glossary / fiches / quiz span all PDFs. Progression tracks pages per document and a course total.
+Many independent courses. Each course owns its documents, glossary cache, fiches, quiz, and progression. Within a course: many PDFs; glossary / fiches / quiz span that course's corpus only.
 
 Free AI only: **Groq** when `GROQ_API_KEY` is set, otherwise **Ollama** (OpenAI-compatible). Stub mode for demos without either.
 
@@ -48,16 +48,17 @@ If Groq and Ollama are both unavailable, the client **falls back to stub** autom
 
 Sample PDFs: `fixtures/sample-photosynthesis.pdf`, `fixtures/sample-cell-respiration.pdf`.
 
-## Multi-document course (rules)
+## Multi-course + multi-document (rules)
 
 | Concern | Rule |
 | --- | --- |
-| Course | Singleton — languages L1/L2 shared |
-| Documents | Many PDFs under that one course (`POST /api/import` adds, never wipes siblings) |
-| Reader | Opens the **active** document (`PUT …/activate` to switch) |
-| Glossary | Shared cache; context defaults to concatenated corpus of all docs |
-| Fiches / quiz | Generated from the full corpus (all docs) |
-| Progression | Pages ouvertes **per doc** + **total**; fiches/quiz counts are course-level |
+| Courses | Many independent courses (`POST /api/courses`, `PUT …/activate`) |
+| Isolation | Docs, glossary cache, fiches, quiz, progression are **per course** |
+| Documents | Many PDFs under the **active** course (`POST /api/import` adds, never wipes siblings) |
+| Reader | Opens the **active** document of the active course |
+| Glossary | Cache scoped to active course; corpus = that course's docs |
+| Fiches / quiz | Generated from the active course's corpus only |
+| Progression | Pages ouvertes **per doc** + **total** for the active course |
 
 ## PDF reader (product direction)
 
@@ -79,9 +80,14 @@ Reference UX: Apple **Aperçu / Preview** (iPhone / macOS) — rendered pages, s
 | Method | Path | Body | Role |
 | --- | --- | --- | --- |
 | `GET` | `/api/health` | — | Provider + key presence |
-| `GET` | `/api/status` | — | Course / counts / `has_pdf` |
-| `PUT` | `/api/languages` | `{ "l1","l2" }` | Language pair |
-| `POST` | `/api/import` | `multipart` field `file` | Add PDF to the course (keeps prior docs) |
+| `GET` | `/api/status` | — | Courses / active course / docs / counts |
+| `GET` | `/api/courses` | — | List courses |
+| `POST` | `/api/courses` | `{ "title","l1?","l2?" }` | Create + activate course |
+| `PUT` | `/api/courses/{id}/activate` | — | Switch active course |
+| `PUT` | `/api/courses/{id}` | `{ "title" }` | Rename |
+| `DELETE` | `/api/courses/{id}` | — | Delete course + its data |
+| `PUT` | `/api/languages` | `{ "l1","l2" }` | Language pair (active course) |
+| `POST` | `/api/import` | `multipart` field `file` | Add PDF to **active** course |
 | `GET` | `/api/documents` | — | List documents |
 | `PUT` | `/api/documents/{id}/activate` | — | Switch active reader PDF |
 | `DELETE` | `/api/documents/{id}` | — | Remove one document |
@@ -99,7 +105,8 @@ Reference UX: Apple **Aperçu / Preview** (iPhone / macOS) — rendered pages, s
 
 ## What works
 
-- Several PDFs under one course: add / list / switch; shared glossary·fiches·quiz corpus
+- Several independent courses: create / list / switch; each isolates docs·glossary·fiches·quiz·progression
+- Several PDFs under the active course: add / list / switch; corpus scoped to that course
 - PDF text extraction (`pdf-extract`) with clear failure for empty/scan PDFs
 - PDF.js page rendering + selectable text layer + selection→Sens menu
 - **Progression**: pages ouvertes per document + total, fiches count, quiz attempts + last score, CTAs
@@ -112,7 +119,7 @@ Reference UX: Apple **Aperçu / Preview** (iPhone / macOS) — rendered pages, s
 ## Still out of slice
 
 - Async job queue / quota UX polish for 429s
-- Multi-course, audio, SRS, paid AI providers
+- Audio, SRS, paid AI providers
 
 ## Layout
 

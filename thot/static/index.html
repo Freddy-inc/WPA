@@ -302,13 +302,31 @@
 <body>
   <header>
     <h1>Thot</h1>
-    <p>Un cours, plusieurs PDFs. Ajoutez des documents, basculez le lecteur, et le glossaire / fiches / quiz portent sur le corpus entier.</p>
+    <p>Plusieurs cours indépendants. Chaque cours a ses PDFs, glossaire, fiches, quiz et progression. Basculez de cours sans mélanger les données.</p>
     <p class="meta"><span id="provider" class="status-pill">…</span></p>
   </header>
 
   <main>
+    <section id="coursesSection">
+      <h2>1. Cours</h2>
+      <p class="meta">Créez et basculez entre des cours isolés. Docs / fiches / quiz / glossaire / progression restent dans le cours actif.</p>
+      <div class="row">
+        <div>
+          <label for="newCourseTitle">Nouveau cours</label>
+          <input type="text" id="newCourseTitle" placeholder="ex. Biologie L2" />
+        </div>
+        <div style="display:flex;align-items:flex-end">
+          <div class="actions" style="margin:0;width:100%">
+            <button type="button" id="createCourseBtn">Créer</button>
+          </div>
+        </div>
+      </div>
+      <div id="courseMsg"></div>
+      <div id="coursesList" class="fiche-list" style="margin-top:0.75rem"></div>
+    </section>
+
     <section id="langs">
-      <h2>1. Langues</h2>
+      <h2>2. Langues (cours actif)</h2>
       <div class="row">
         <div>
           <label for="l1">L1 (ma langue)</label>
@@ -336,8 +354,8 @@
     </section>
 
     <section id="import">
-      <h2>2. Documents du cours</h2>
-      <p class="meta">Ajoutez plusieurs PDFs au <strong>même</strong> cours. Glossaire, fiches et quiz agrègent tous les textes. La progression compte les pages par document et le total.</p>
+      <h2>3. Documents du cours actif</h2>
+      <p class="meta">Plusieurs PDFs dans ce cours. Glossaire, fiches et quiz agrègent les textes <strong>de ce cours uniquement</strong>.</p>
       <label for="pdf">Ajouter un PDF (texte extractible)</label>
       <input type="file" id="pdf" accept="application/pdf,.pdf" />
       <div class="actions">
@@ -361,7 +379,7 @@
     </section>
 
     <section id="fichesSection">
-      <h2>3. Mes fiches</h2>
+      <h2>4. Mes fiches</h2>
       <p class="meta" id="fichesCountLabel">Aucune fiche pour l’instant.</p>
       <div class="actions">
         <button type="button" id="fichesBtn">Générer fiches</button>
@@ -411,7 +429,7 @@
     </section>
 
     <section id="generate">
-      <h2>4. Quiz du cours</h2>
+      <h2>5. Quiz du cours</h2>
       <div id="quizLaunch">
         <p>Questions tirées du corpus de tous les PDFs du cours.</p>
         <p class="meta">Ordre aléatoire à chaque tentative · couverture : ensemble des documents.</p>
@@ -434,7 +452,7 @@
     </section>
 
     <section id="progression">
-      <h2>5. Progression</h2>
+      <h2>6. Progression</h2>
       <div class="prog-block">
         <h3>Lecture</h3>
         <div class="value" id="progPages">Pages ouvertes : 0 / 0</div>
@@ -479,6 +497,7 @@
     let pdfDoc = null;
     let currentPage = 1;
     let activeDocId = null;
+    let activeCourseId = null;
     let lastSelection = "";
     let menuPinned = false;
     let quizQuestions = [];
@@ -523,11 +542,17 @@
         $("provider").textContent = label;
         if (s.course?.l1) $("l1").value = s.course.l1;
         if (s.course?.l2) $("l2").value = s.course.l2;
+        activeCourseId = s.course?.id || s.active_course?.id || null;
+        renderCourses(s.courses || [], s.active_course || s.course);
         renderDocuments(s.documents || [], s.active_document);
         if (s.active_document?.has_pdf) {
           activeDocId = s.active_document.id;
           $("pdfTitle").textContent = s.active_document.filename || "Cours";
           await openPdf(s.active_document.pdf_url || "/api/course/pdf");
+        } else {
+          activeDocId = null;
+          pdfDoc = null;
+          $("readerSection").classList.remove("visible");
         }
         renderProgression(s.progression);
         await loadFichesList();
@@ -536,6 +561,65 @@
         $("provider").textContent = "API indisponible";
       }
     }
+
+    function renderCourses(courses, active) {
+      const el = $("coursesList");
+      if (!courses.length) {
+        el.innerHTML = `<div class="empty-state"><p>Aucun cours — créez-en un.</p></div>`;
+        return;
+      }
+      el.innerHTML = courses.map((c) => {
+        const isActive = active && c.id === active.id;
+        const langs = [c.l1, c.l2].filter(Boolean).join(" ← ") || "langues non définies";
+        return `<div class="fiche-row" data-course-id="${c.id}" style="cursor:default">
+          <div class="preview">
+            <strong>${escapeHtml(c.title)}${isActive ? " · actif" : ""}</strong>
+            <div class="sub">${escapeHtml(langs)} · ${c.char_count || 0} car. corpus</div>
+          </div>
+          <div class="actions" style="margin:0; flex-shrink:0">
+            ${isActive
+              ? `<span class="status-pill">cours actif</span>`
+              : `<button type="button" class="secondary course-switch" data-id="${c.id}">Basculer</button>`}
+          </div>
+        </div>`;
+      }).join("");
+      el.querySelectorAll(".course-switch").forEach((btn) => {
+        btn.onclick = () => switchCourse(Number(btn.dataset.id));
+      });
+    }
+
+    async function switchCourse(id) {
+      try {
+        const data = await api(`/api/courses/${id}/activate`, { method: "PUT" });
+        activeCourseId = data.course?.id || id;
+        setMsg($("courseMsg"), `Cours actif : ${data.course?.title || id}`, true);
+        await refreshStatus();
+      } catch (e) {
+        setMsg($("courseMsg"), e.message, false);
+      }
+    }
+
+    $("createCourseBtn").onclick = async () => {
+      const title = ($("newCourseTitle").value || "").trim();
+      if (!title) return setMsg($("courseMsg"), "Donnez un titre au cours", false);
+      try {
+        const body = {
+          title,
+          l1: $("l1").value,
+          l2: $("l2").value,
+        };
+        const data = await api("/api/courses", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        $("newCourseTitle").value = "";
+        setMsg($("courseMsg"), `Créé et activé : ${data.course?.title}`, true);
+        await refreshStatus();
+      } catch (e) {
+        setMsg($("courseMsg"), e.message, false);
+      }
+    };
 
     function renderDocuments(docs, active) {
       const el = $("docsList");
@@ -583,7 +667,8 @@
       const total = p.total_pages || 0;
       const opened = p.pages_opened || 0;
       const nDocs = p.docs_count || (p.by_doc || []).length || 0;
-      $("progPages").textContent = `Pages ouvertes : ${opened} / ${total || "—"} · ${nDocs} doc${nDocs === 1 ? "" : "s"}`;
+      const cid = p.course_id != null ? ` · cours #${p.course_id}` : "";
+      $("progPages").textContent = `Pages ouvertes : ${opened} / ${total || "—"} · ${nDocs} doc${nDocs === 1 ? "" : "s"}${cid}`;
       const by = $("progByDoc");
       if (by) {
         if ((p.by_doc || []).length) {

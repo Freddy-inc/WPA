@@ -42,6 +42,9 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/health", get(health))
         .route("/api/status", get(status))
+        .route("/api/courses", get(list_courses).post(create_course))
+        .route("/api/courses/{id}/activate", put(activate_course))
+        .route("/api/courses/{id}", delete(delete_course).put(update_course))
         .route("/api/languages", put(set_languages))
         .route("/api/import", post(import_pdf))
         .route("/api/documents", get(list_documents))
@@ -77,10 +80,25 @@ async fn health(State(st): State<Arc<AppState>>) -> Json<Health> {
     })
 }
 
+fn course_summary(c: &crate::db::CourseRow) -> serde_json::Value {
+    json!({
+        "id": c.id,
+        "title": c.title,
+        "filename": c.filename,
+        "char_count": c.text.chars().count(),
+        "l1": c.l1,
+        "l2": c.l2,
+        "active": c.active,
+        "has_text": !c.text.trim().is_empty(),
+        "created_at": c.created_at,
+    })
+}
+
 fn doc_summary(d: &crate::db::DocumentRow, st: &AppState) -> serde_json::Value {
     let has_pdf = st.doc_pdf_path(d.id).is_file();
     json!({
         "id": d.id,
+        "course_id": d.course_id,
         "filename": d.filename,
         "char_count": d.text.chars().count(),
         "total_pages": d.total_pages,
@@ -92,9 +110,19 @@ fn doc_summary(d: &crate::db::DocumentRow, st: &AppState) -> serde_json::Value {
 }
 
 async fn status(State(st): State<Arc<AppState>>) -> Result<Json<serde_json::Value>, ApiError> {
+    let courses = st.db.list_courses().await.map_err(ApiError::from)?;
     let course = st.db.get_course().await.map_err(ApiError::from)?;
-    let docs = st.db.list_documents().await.map_err(ApiError::from)?;
-    let active = st.db.active_document().await.map_err(ApiError::from)?;
+    let course_id = course.as_ref().map(|c| c.id);
+    let docs = if let Some(cid) = course_id {
+        st.db.list_documents(cid).await.map_err(ApiError::from)?
+    } else {
+        vec![]
+    };
+    let active = if let Some(cid) = course_id {
+        st.db.active_document(cid).await.map_err(ApiError::from)?
+    } else {
+        None
+    };
     let fiches = st.db.list_fiches().await.map_err(ApiError::from)?;
     let quiz = st.db.get_quiz().await.map_err(ApiError::from)?;
     let quiz_count = quiz
@@ -109,7 +137,11 @@ async fn status(State(st): State<Arc<AppState>>) -> Result<Json<serde_json::Valu
     Ok(Json(json!({
         "provider": st.llm.provider_label(),
         "groq_key_present": st.llm.has_groq_key(),
+        "courses": courses.iter().map(course_summary).collect::<Vec<_>>(),
+        "active_course": course.as_ref().map(course_summary),
         "course": course.as_ref().map(|c| json!({
+            "id": c.id,
+            "title": c.title,
             "filename": c.filename,
             "char_count": c.text.chars().count(),
             "l1": c.l1,
@@ -130,12 +162,119 @@ async fn status(State(st): State<Arc<AppState>>) -> Result<Json<serde_json::Valu
         "quiz_questions": quiz_count,
         "progression": st.db.progression_snapshot().await.map_err(ApiError::from)?,
         "rules": {
-            "scope": "one_course_many_docs",
-            "glossary": "spans all documents (shared course corpus)",
-            "fiches": "generated from concatenated corpus of all docs",
-            "quiz": "generated from concatenated corpus of all docs",
-            "progression": "pages opened per document + course total",
+            "scope": "many_courses_each_many_docs",
+            "courses": "independent — own docs, glossary cache, fiches, quiz, progression",
+            "glossary": "per active course (cache isolated)",
+            "fiches": "per active course, from that course's doc corpus",
+            "quiz": "per active course, from that course's doc corpus",
+            "progression": "per active course; pages opened per document + course total",
         },
+    })))
+}
+
+async fn list_courses(
+    State(st): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let courses = st.db.list_courses().await.map_err(ApiError::from)?;
+    Ok(Json(json!({
+        "courses": courses.iter().map(course_summary).collect::<Vec<_>>(),
+        "count": courses.len(),
+        "active_course_id": courses.iter().find(|c| c.active).map(|c| c.id),
+    })))
+}
+
+#[derive(Deserialize)]
+struct CreateCourseBody {
+    title: String,
+    #[serde(default)]
+    l1: Option<String>,
+    #[serde(default)]
+    l2: Option<String>,
+}
+
+async fn create_course(
+    State(st): State<Arc<AppState>>,
+    Json(body): Json<CreateCourseBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let course = st
+        .db
+        .create_course(
+            &body.title,
+            body.l1.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+            body.l2.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+        )
+        .await
+        .map_err(|e| ApiError::bad(e.to_string()))?;
+    let courses = st.db.list_courses().await.map_err(ApiError::from)?;
+    Ok(Json(json!({
+        "ok": true,
+        "course": course_summary(&course),
+        "courses": courses.iter().map(course_summary).collect::<Vec<_>>(),
+    })))
+}
+
+#[derive(Deserialize)]
+struct UpdateCourseBody {
+    title: String,
+}
+
+async fn update_course(
+    State(st): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    Json(body): Json<UpdateCourseBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let course = st
+        .db
+        .rename_course(id, &body.title)
+        .await
+        .map_err(|e| ApiError::bad(e.to_string()))?;
+    Ok(Json(json!({ "ok": true, "course": course_summary(&course) })))
+}
+
+async fn activate_course(
+    State(st): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let course = st
+        .db
+        .set_active_course(id)
+        .await
+        .map_err(|e| ApiError::bad(e.to_string()))?;
+    let docs = st.db.list_documents(id).await.map_err(ApiError::from)?;
+    let active = st.db.active_document(id).await.map_err(ApiError::from)?;
+    if let Some(ref d) = active {
+        let path = st.doc_pdf_path(d.id);
+        if path.is_file() {
+            let _ = std::fs::copy(&path, st.data_dir.join("course.pdf"));
+        }
+    }
+    Ok(Json(json!({
+        "ok": true,
+        "course": course_summary(&course),
+        "documents": docs.iter().map(|d| doc_summary(d, &st)).collect::<Vec<_>>(),
+        "active_document": active.as_ref().map(|d| doc_summary(d, &st)),
+        "progression": st.db.progression_snapshot().await.map_err(ApiError::from)?,
+    })))
+}
+
+async fn delete_course(
+    State(st): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let docs = st.db.list_documents(id).await.map_err(ApiError::from)?;
+    for d in &docs {
+        let _ = std::fs::remove_file(st.doc_pdf_path(d.id));
+    }
+    st.db
+        .delete_course(id)
+        .await
+        .map_err(|e| ApiError::bad(e.to_string()))?;
+    let courses = st.db.list_courses().await.map_err(ApiError::from)?;
+    let active = st.db.active_course().await.map_err(ApiError::from)?;
+    Ok(Json(json!({
+        "ok": true,
+        "courses": courses.iter().map(course_summary).collect::<Vec<_>>(),
+        "active_course": active.as_ref().map(course_summary),
     })))
 }
 
@@ -158,7 +297,12 @@ async fn set_languages(
         return Err(ApiError::bad("Choisissez deux langues différentes"));
     }
     st.db.set_languages(l1, l2).await.map_err(ApiError::from)?;
-    Ok(Json(json!({ "l1": l1, "l2": l2 })))
+    let course = st.db.active_course().await.map_err(ApiError::from)?;
+    Ok(Json(json!({
+        "l1": l1,
+        "l2": l2,
+        "course_id": course.as_ref().map(|c| c.id),
+    })))
 }
 
 async fn import_pdf(
@@ -188,10 +332,11 @@ async fn import_pdf(
         return Err(ApiError::bad("PDF trop lourd (max 15 Mo)"));
     }
 
+    let course_id = st.db.active_course_id().await.map_err(ApiError::from)?;
     let extracted = pdf::extract_text(&filename, &bytes).map_err(|e| ApiError::bad(e.to_string()))?;
     let doc = st
         .db
-        .add_document(&extracted.filename, &extracted.text)
+        .add_document(course_id, &extracted.filename, &extracted.text)
         .await
         .map_err(ApiError::from)?;
 
@@ -200,15 +345,15 @@ async fn import_pdf(
     let path = st.doc_pdf_path(doc.id);
     std::fs::write(&path, &bytes).map_err(|e| ApiError::from(anyhow::anyhow!(e)))?;
 
-    // Keep legacy course.pdf as copy of active for older clients.
     if doc.active {
         let legacy = st.data_dir.join("course.pdf");
         let _ = std::fs::write(&legacy, &bytes);
     }
 
-    let docs = st.db.list_documents().await.map_err(ApiError::from)?;
+    let docs = st.db.list_documents(course_id).await.map_err(ApiError::from)?;
     Ok(Json(json!({
         "ok": true,
+        "course_id": course_id,
         "document": doc_summary(&doc, &st),
         "documents": docs.iter().map(|d| doc_summary(d, &st)).collect::<Vec<_>>(),
         "filename": doc.filename,
@@ -216,15 +361,17 @@ async fn import_pdf(
         "preview": extracted.text.chars().take(400).collect::<String>(),
         "has_pdf": true,
         "pdf_url": format!("/api/documents/{}/pdf", doc.id),
-        "note": "Document ajouté au cours. Glossaire / fiches / quiz portent sur le corpus de tous les PDFs.",
+        "note": "Document ajouté au cours actif. Glossaire / fiches / quiz de ce cours portent sur son corpus.",
     })))
 }
 
 async fn list_documents(
     State(st): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let docs = st.db.list_documents().await.map_err(ApiError::from)?;
+    let course_id = st.db.active_course_id().await.map_err(ApiError::from)?;
+    let docs = st.db.list_documents(course_id).await.map_err(ApiError::from)?;
     Ok(Json(json!({
+        "course_id": course_id,
         "documents": docs.iter().map(|d| doc_summary(d, &st)).collect::<Vec<_>>(),
         "count": docs.len(),
     })))
@@ -255,13 +402,20 @@ async fn delete_document(
     Path(id): Path<i64>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let path = st.doc_pdf_path(id);
+    let course_id = st
+        .db
+        .get_document(id)
+        .await
+        .map_err(ApiError::from)?
+        .map(|d| d.course_id)
+        .ok_or_else(|| ApiError::not_found("Document introuvable"))?;
     st.db
         .delete_document(id)
         .await
         .map_err(|e| ApiError::bad(e.to_string()))?;
     let _ = std::fs::remove_file(&path);
-    let docs = st.db.list_documents().await.map_err(ApiError::from)?;
-    let active = st.db.active_document().await.map_err(ApiError::from)?;
+    let docs = st.db.list_documents(course_id).await.map_err(ApiError::from)?;
+    let active = st.db.active_document(course_id).await.map_err(ApiError::from)?;
     Ok(Json(json!({
         "ok": true,
         "documents": docs.iter().map(|d| doc_summary(d, &st)).collect::<Vec<_>>(),
@@ -301,9 +455,10 @@ async fn document_pdf(
 }
 
 async fn course_pdf(State(st): State<Arc<AppState>>) -> Result<Response, ApiError> {
+    let course_id = st.db.active_course_id().await.map_err(ApiError::from)?;
     let doc = st
         .db
-        .active_document()
+        .active_document(course_id)
         .await
         .map_err(ApiError::from)?
         .ok_or_else(|| ApiError::not_found("Aucun document"))?;
@@ -326,7 +481,7 @@ async fn define_glossary(
         .get_course()
         .await
         .map_err(ApiError::from)?
-        .ok_or_else(|| ApiError::bad("Aucun cours — importez un PDF d'abord"))?;
+        .ok_or_else(|| ApiError::bad("Aucun cours — créez un cours d'abord"))?;
 
     let l1 = course
         .l1
@@ -471,11 +626,12 @@ async fn open_page(
     if body.page < 1 {
         return Err(ApiError::bad("page doit être ≥ 1"));
     }
+    let course_id = st.db.active_course_id().await.map_err(ApiError::from)?;
     let doc_id = match body.doc_id {
         Some(id) if id > 0 => id,
         _ => st
             .db
-            .active_document()
+            .active_document(course_id)
             .await
             .map_err(ApiError::from)?
             .map(|d| d.id)

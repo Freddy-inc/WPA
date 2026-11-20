@@ -35,12 +35,14 @@ async fn main() -> anyhow::Result<()> {
     let db = Db::connect(db_path.to_str().unwrap_or("data/thot.db")).await?;
 
     // Bridge legacy single course.pdf into docs/{id}.pdf when missing.
-    if let Ok(Some(active)) = db.active_document().await {
-        let dest = docs_dir.join(format!("{}.pdf", active.id));
-        let legacy = data_dir.join("course.pdf");
-        if !dest.is_file() && legacy.is_file() {
-            let _ = std::fs::copy(&legacy, &dest);
-            tracing::info!(id = active.id, "migrated legacy course.pdf into docs/");
+    if let Ok(Some(course)) = db.active_course().await {
+        if let Ok(Some(active)) = db.active_document(course.id).await {
+            let dest = docs_dir.join(format!("{}.pdf", active.id));
+            let legacy = data_dir.join("course.pdf");
+            if !dest.is_file() && legacy.is_file() {
+                let _ = std::fs::copy(&legacy, &dest);
+                tracing::info!(id = active.id, "migrated legacy course.pdf into docs/");
+            }
         }
     }
 
