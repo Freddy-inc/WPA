@@ -302,7 +302,7 @@
 <body>
   <header>
     <h1>Thot</h1>
-    <p>Importer un PDF, le lire comme dans Aperçu / Preview (pages rendues, texte sélectionnable), obtenir le sens L1 au menu de sélection, puis générer fiches ou quiz.</p>
+    <p>Un cours, plusieurs PDFs. Ajoutez des documents, basculez le lecteur, et le glossaire / fiches / quiz portent sur le corpus entier.</p>
     <p class="meta"><span id="provider" class="status-pill">…</span></p>
   </header>
 
@@ -336,13 +336,15 @@
     </section>
 
     <section id="import">
-      <h2>2. Importer le PDF</h2>
-      <label for="pdf">Fichier PDF (texte extractible)</label>
+      <h2>2. Documents du cours</h2>
+      <p class="meta">Ajoutez plusieurs PDFs au <strong>même</strong> cours. Glossaire, fiches et quiz agrègent tous les textes. La progression compte les pages par document et le total.</p>
+      <label for="pdf">Ajouter un PDF (texte extractible)</label>
       <input type="file" id="pdf" accept="application/pdf,.pdf" />
       <div class="actions">
-        <button type="button" id="importBtn">Importer</button>
+        <button type="button" id="importBtn">Ajouter au cours</button>
       </div>
       <div id="importMsg"></div>
+      <div id="docsList" class="fiche-list" style="margin-top:0.75rem"></div>
     </section>
 
     <section id="readerSection">
@@ -371,7 +373,7 @@
       <div id="fichesListView">
         <div id="fichesEmpty" class="empty-state" hidden>
           <p><strong>Aucune fiche pour l’instant.</strong></p>
-          <p>Les fiches sont générées à partir de votre PDF.</p>
+          <p>Les fiches sont générées à partir du corpus de tous les PDFs du cours.</p>
           <div class="actions">
             <button type="button" id="emptyGenBtn">Générer fiches</button>
             <button type="button" class="secondary" id="emptyPdfBtn">Ouvrir le PDF</button>
@@ -411,8 +413,8 @@
     <section id="generate">
       <h2>4. Quiz du cours</h2>
       <div id="quizLaunch">
-        <p>Questions tirées de votre PDF.</p>
-        <p class="meta">Ordre aléatoire à chaque tentative · couverture : ensemble du cours.</p>
+        <p>Questions tirées du corpus de tous les PDFs du cours.</p>
+        <p class="meta">Ordre aléatoire à chaque tentative · couverture : ensemble des documents.</p>
         <p class="meta" id="quizLastScore">Aucune tentative pour l’instant.</p>
         <div class="actions">
           <button type="button" id="quizStartBtn">Commencer</button>
@@ -436,7 +438,8 @@
       <div class="prog-block">
         <h3>Lecture</h3>
         <div class="value" id="progPages">Pages ouvertes : 0 / 0</div>
-        <p class="meta">Chaque page vue dans le lecteur compte une fois.</p>
+        <p class="meta">Par document + total cours. Chaque page vue compte une fois.</p>
+        <div id="progByDoc" class="meta" style="margin-top:0.45rem"></div>
       </div>
       <div class="prog-block">
         <h3>Fiches</h3>
@@ -475,6 +478,7 @@
 
     let pdfDoc = null;
     let currentPage = 1;
+    let activeDocId = null;
     let lastSelection = "";
     let menuPinned = false;
     let quizQuestions = [];
@@ -519,9 +523,11 @@
         $("provider").textContent = label;
         if (s.course?.l1) $("l1").value = s.course.l1;
         if (s.course?.l2) $("l2").value = s.course.l2;
-        if (s.course?.has_pdf) {
-          $("pdfTitle").textContent = s.course.filename || "Cours";
-          await openPdf("/api/course/pdf", s.course.filename);
+        renderDocuments(s.documents || [], s.active_document);
+        if (s.active_document?.has_pdf) {
+          activeDocId = s.active_document.id;
+          $("pdfTitle").textContent = s.active_document.filename || "Cours";
+          await openPdf(s.active_document.pdf_url || "/api/course/pdf");
         }
         renderProgression(s.progression);
         await loadFichesList();
@@ -531,12 +537,64 @@
       }
     }
 
+    function renderDocuments(docs, active) {
+      const el = $("docsList");
+      if (!docs.length) {
+        el.innerHTML = `<div class="empty-state"><p>Aucun document — ajoutez un premier PDF.</p></div>`;
+        return;
+      }
+      el.innerHTML = docs.map((d) => {
+        const isActive = active && d.id === active.id;
+        return `<div class="fiche-row" data-doc-id="${d.id}" style="cursor:default">
+          <div class="preview">
+            <strong>${escapeHtml(d.filename)}${isActive ? " · actif" : ""}</strong>
+            <div class="sub">${d.char_count || 0} car. · ${d.total_pages || "?"} pages</div>
+          </div>
+          <div class="actions" style="margin:0; flex-shrink:0">
+            ${isActive
+              ? `<span class="status-pill">lecteur</span>`
+              : `<button type="button" class="secondary doc-switch" data-id="${d.id}">Ouvrir</button>`}
+          </div>
+        </div>`;
+      }).join("");
+      el.querySelectorAll(".doc-switch").forEach((btn) => {
+        btn.onclick = () => switchDocument(Number(btn.dataset.id));
+      });
+    }
+
+    async function switchDocument(id) {
+      try {
+        const data = await api(`/api/documents/${id}/activate`, { method: "PUT" });
+        activeDocId = data.document?.id || id;
+        $("pdfTitle").textContent = data.document?.filename || "Cours";
+        renderDocuments(
+          (await api("/api/documents")).documents || [],
+          data.document
+        );
+        await openPdf(data.pdf_url || `/api/documents/${id}/pdf`);
+        setMsg($("importMsg"), `Lecteur : ${data.document?.filename || id}`, true);
+      } catch (e) {
+        setMsg($("importMsg"), e.message, false);
+      }
+    }
+
     function renderProgression(p) {
       if (!p) return;
       const total = p.total_pages || 0;
       const opened = p.pages_opened || 0;
-      $("progPages").textContent = `Pages ouvertes : ${opened} / ${total || "—"}`;
-      $("progFiches").textContent = `${p.fiches_count || 0} disponibles`;
+      const nDocs = p.docs_count || (p.by_doc || []).length || 0;
+      $("progPages").textContent = `Pages ouvertes : ${opened} / ${total || "—"} · ${nDocs} doc${nDocs === 1 ? "" : "s"}`;
+      const by = $("progByDoc");
+      if (by) {
+        if ((p.by_doc || []).length) {
+          by.innerHTML = p.by_doc.map((d) =>
+            `${escapeHtml(d.filename)} : ${d.pages_opened} / ${d.total_pages || "—"}${d.active ? " (actif)" : ""}`
+          ).join("<br>");
+        } else {
+          by.textContent = "";
+        }
+      }
+      $("progFiches").textContent = `${p.fiches_count || 0} disponibles (corpus tous docs)`;
       if ((p.quiz_attempts || 0) === 0) {
         $("progQuiz").textContent = "Aucune tentative";
       } else {
@@ -576,9 +634,17 @@
       $("importBtn").disabled = true;
       try {
         const data = await api("/api/import", { method: "POST", body: fd });
-        setMsg($("importMsg"), `Import OK — ${data.filename} (${data.char_count} car.)`, true);
+        const n = (data.documents || []).length;
+        setMsg(
+          $("importMsg"),
+          `Ajouté — ${data.filename} (${data.char_count} car.) · ${n} doc${n === 1 ? "" : "s"} dans le cours`,
+          true
+        );
+        activeDocId = data.document?.id || null;
         $("pdfTitle").textContent = data.filename;
-        await openPdf(data.pdf_url || "/api/course/pdf", data.filename);
+        renderDocuments(data.documents || [], data.document);
+        await openPdf(data.pdf_url || "/api/course/pdf");
+        $("pdf").value = "";
       } catch (e) {
         setMsg($("importMsg"), e.message, false);
       } finally {
@@ -678,6 +744,7 @@
           body: JSON.stringify({
             page: num,
             total_pages: pdfDoc ? pdfDoc.numPages : null,
+            doc_id: activeDocId || undefined,
           }),
         });
         if (res.progression) renderProgression(res.progression);

@@ -27,11 +27,22 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter(EnvFilter::from_default_env().add_directive("thot=info".parse()?))
         .init();
 
-    let data_dir = std::env::var("THOT_DATA_DIR").unwrap_or_else(|_| "data".into());
+    let data_dir = PathBuf::from(std::env::var("THOT_DATA_DIR").unwrap_or_else(|_| "data".into()));
     let _ = std::fs::create_dir_all(&data_dir);
-    let db_path = format!("{data_dir}/thot.db");
-    let pdf_path = PathBuf::from(&data_dir).join("course.pdf");
-    let db = Db::connect(&db_path).await?;
+    let docs_dir = data_dir.join("docs");
+    let _ = std::fs::create_dir_all(&docs_dir);
+    let db_path = data_dir.join("thot.db");
+    let db = Db::connect(db_path.to_str().unwrap_or("data/thot.db")).await?;
+
+    // Bridge legacy single course.pdf into docs/{id}.pdf when missing.
+    if let Ok(Some(active)) = db.active_document().await {
+        let dest = docs_dir.join(format!("{}.pdf", active.id));
+        let legacy = data_dir.join("course.pdf");
+        if !dest.is_file() && legacy.is_file() {
+            let _ = std::fs::copy(&legacy, &dest);
+            tracing::info!(id = active.id, "migrated legacy course.pdf into docs/");
+        }
+    }
 
     let llm = LlmClient::new(LlmConfig::default());
     tracing::info!(
@@ -44,7 +55,7 @@ async fn main() -> anyhow::Result<()> {
         db,
         llm,
         verifier: WebVerifier::new(),
-        pdf_path,
+        data_dir,
     };
 
     let static_dir = resolve_static_dir();
@@ -62,8 +73,8 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|p| p.parse().ok())
         .unwrap_or(8787);
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    tracing::info!("Thot listening on http://{addr}");
     let listener = tokio::net::TcpListener::bind(addr).await?;
+    tracing::info!("Thot listening on http://{addr}");
     axum::serve(listener, app).await?;
     Ok(())
 }

@@ -2,7 +2,9 @@
 
 Rust (`axum`) backend + HTML demo for the Thot study loop:
 
-**Import PDF → read rendered pages (selectable text) → selection menu → L1 sense → generate fiches *or* quiz.**
+**Import PDFs (same course) → switch documents → read rendered pages → selection → L1 sense → fiches *or* quiz on the full corpus.**
+
+One course, many documents. Glossary / fiches / quiz span all PDFs. Progression tracks pages per document and a course total.
 
 Free AI only: **Groq** when `GROQ_API_KEY` is set, otherwise **Ollama** (OpenAI-compatible). Stub mode for demos without either.
 
@@ -35,7 +37,7 @@ Open **http://127.0.0.1:8787/**
 | --- | --- | --- |
 | `GROQ_API_KEY` | _(empty)_ | Groq primary; absent → Ollama |
 | `THOT_PORT` | `8787` | HTTP port |
-| `THOT_DATA_DIR` | `data` | SQLite + `course.pdf` |
+| `THOT_DATA_DIR` | `data` | SQLite + `docs/{id}.pdf` |
 | `THOT_GROQ_INTERACTIVE_MODEL` | `openai/gpt-oss-20b` | Glossary model |
 | `THOT_GROQ_BATCH_MODEL` | `openai/gpt-oss-120b` | Fiches / quiz model |
 | `THOT_OLLAMA_BASE` | `http://127.0.0.1:11434/v1` | Ollama OpenAI base |
@@ -44,14 +46,25 @@ Open **http://127.0.0.1:8787/**
 
 If Groq and Ollama are both unavailable, the client **falls back to stub** automatically and labels responses with `[STUB]`.
 
-Sample PDF: `fixtures/sample-photosynthesis.pdf`.
+Sample PDFs: `fixtures/sample-photosynthesis.pdf`, `fixtures/sample-cell-respiration.pdf`.
+
+## Multi-document course (rules)
+
+| Concern | Rule |
+| --- | --- |
+| Course | Singleton — languages L1/L2 shared |
+| Documents | Many PDFs under that one course (`POST /api/import` adds, never wipes siblings) |
+| Reader | Opens the **active** document (`PUT …/activate` to switch) |
+| Glossary | Shared cache; context defaults to concatenated corpus of all docs |
+| Fiches / quiz | Generated from the full corpus (all docs) |
+| Progression | Pages ouvertes **per doc** + **total**; fiches/quiz counts are course-level |
 
 ## PDF reader (product direction)
 
 Reference UX: Apple **Aperçu / Preview** (iPhone / macOS) — rendered pages, selectable text, selection reveals sense + options.
 
 - Pages rendered with **PDF.js** (canvas) + **text layer** (selectable)
-- PDF bytes stored at `data/course.pdf` and served via `GET /api/course/pdf`
+- PDF bytes stored at `data/docs/{id}.pdf` (active also mirrored to `course.pdf` for legacy)
 - On text selection: floating menu with primary action **Sens** (glossary L1), plus Copier / Fermer
 
 ### Gaps vs full Aperçu / Preview
@@ -68,23 +81,28 @@ Reference UX: Apple **Aperçu / Preview** (iPhone / macOS) — rendered pages, s
 | `GET` | `/api/health` | — | Provider + key presence |
 | `GET` | `/api/status` | — | Course / counts / `has_pdf` |
 | `PUT` | `/api/languages` | `{ "l1","l2" }` | Language pair |
-| `POST` | `/api/import` | `multipart` field `file` | Extract + store PDF bytes |
-| `GET` | `/api/course/pdf` | — | Raw PDF for the viewer |
+| `POST` | `/api/import` | `multipart` field `file` | Add PDF to the course (keeps prior docs) |
+| `GET` | `/api/documents` | — | List documents |
+| `PUT` | `/api/documents/{id}/activate` | — | Switch active reader PDF |
+| `DELETE` | `/api/documents/{id}` | — | Remove one document |
+| `GET` | `/api/documents/{id}/pdf` | — | Raw PDF for that document |
+| `GET` | `/api/course/pdf` | — | Active document PDF (compat) |
 | `POST` | `/api/glossary` | `{ "term" }` | L2→L1 + Wiktionary/Wikipedia + cache |
-| `POST` | `/api/generate` | `{ "kind":"fiches"\|"quiz" }` | One generation path |
+| `POST` | `/api/generate` | `{ "kind":"fiches"\|"quiz" }` | One generation path (full corpus) |
 | `GET` | `/api/fiches` | — | List fiches (+ count) |
 | `GET` | `/api/fiches/{id}` | — | One fiche |
 | `PUT` | `/api/fiches/{id}` | `{ "front","back" }` | Edit recto/verso (marks edited) |
 | `GET` | `/api/quiz` | — | Stored quiz |
 | `POST` | `/api/quiz/attempt` | `{ "score","total" }` | Record quiz attempt |
-| `POST` | `/api/pages/open` | `{ "page","total_pages?" }` | Mark page opened |
-| `GET` | `/api/progression` | — | Lecture / fiches / quiz aggregate |
+| `POST` | `/api/pages/open` | `{ "page","total_pages?","doc_id?" }` | Mark page opened for a doc |
+| `GET` | `/api/progression` | — | Per-doc + total lecture / fiches / quiz |
 
 ## What works
 
+- Several PDFs under one course: add / list / switch; shared glossary·fiches·quiz corpus
 - PDF text extraction (`pdf-extract`) with clear failure for empty/scan PDFs
 - PDF.js page rendering + selectable text layer + selection→Sens menu
-- **Progression**: pages ouvertes (SQLite), fiches count, quiz attempts + last score, CTAs
+- **Progression**: pages ouvertes per document + total, fiches count, quiz attempts + last score, CTAs
 - `LlmClient` OpenAI-compatible: Groq → Ollama → stub
 - Glossary: LLM draft → Wiktionary + Wikipedia → reconcile → SQLite cache + sources badge
 - **Mes fiches**: empty state + CTAs, list with aperçu recto, edit recto/verso + save, revise (flip)

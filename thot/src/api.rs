@@ -7,7 +7,7 @@ use axum::body::Body;
 use axum::extract::{Multipart, Path, State};
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post, put};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -24,8 +24,18 @@ pub struct AppState {
     pub db: Db,
     pub llm: LlmClient,
     pub verifier: WebVerifier,
-    /// On-disk copy of the active course PDF (for the page viewer).
-    pub pdf_path: PathBuf,
+    /// Data directory: `docs/{id}.pdf` + sqlite.
+    pub data_dir: PathBuf,
+}
+
+impl AppState {
+    fn docs_dir(&self) -> PathBuf {
+        self.data_dir.join("docs")
+    }
+
+    fn doc_pdf_path(&self, id: i64) -> PathBuf {
+        self.docs_dir().join(format!("{id}.pdf"))
+    }
 }
 
 pub fn router(state: AppState) -> Router {
@@ -34,6 +44,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/status", get(status))
         .route("/api/languages", put(set_languages))
         .route("/api/import", post(import_pdf))
+        .route("/api/documents", get(list_documents))
+        .route("/api/documents/{id}/activate", put(activate_document))
+        .route("/api/documents/{id}", delete(delete_document))
+        .route("/api/documents/{id}/pdf", get(document_pdf))
         .route("/api/course/pdf", get(course_pdf))
         .route("/api/glossary", post(define_glossary))
         .route("/api/generate", post(generate_content))
@@ -63,8 +77,24 @@ async fn health(State(st): State<Arc<AppState>>) -> Json<Health> {
     })
 }
 
+fn doc_summary(d: &crate::db::DocumentRow, st: &AppState) -> serde_json::Value {
+    let has_pdf = st.doc_pdf_path(d.id).is_file();
+    json!({
+        "id": d.id,
+        "filename": d.filename,
+        "char_count": d.text.chars().count(),
+        "total_pages": d.total_pages,
+        "active": d.active,
+        "has_pdf": has_pdf,
+        "pdf_url": if has_pdf { format!("/api/documents/{}/pdf", d.id) } else { String::new() },
+        "created_at": d.created_at,
+    })
+}
+
 async fn status(State(st): State<Arc<AppState>>) -> Result<Json<serde_json::Value>, ApiError> {
     let course = st.db.get_course().await.map_err(ApiError::from)?;
+    let docs = st.db.list_documents().await.map_err(ApiError::from)?;
+    let active = st.db.active_document().await.map_err(ApiError::from)?;
     let fiches = st.db.list_fiches().await.map_err(ApiError::from)?;
     let quiz = st.db.get_quiz().await.map_err(ApiError::from)?;
     let quiz_count = quiz
@@ -73,7 +103,9 @@ async fn status(State(st): State<Arc<AppState>>) -> Result<Json<serde_json::Valu
         .map(|v| v.len())
         .unwrap_or(0);
 
-    let has_pdf = st.pdf_path.is_file();
+    let docs_json: Vec<_> = docs.iter().map(|d| doc_summary(d, &st)).collect();
+    let active_json = active.as_ref().map(|d| doc_summary(d, &st));
+
     Ok(Json(json!({
         "provider": st.llm.provider_label(),
         "groq_key_present": st.llm.has_groq_key(),
@@ -84,12 +116,26 @@ async fn status(State(st): State<Arc<AppState>>) -> Result<Json<serde_json::Valu
             "l2": c.l2,
             "preview": c.text.chars().take(280).collect::<String>(),
             "has_text": !c.text.trim().is_empty(),
-            "has_pdf": has_pdf && !c.filename.is_empty(),
-            "pdf_url": if has_pdf && !c.filename.is_empty() { "/api/course/pdf" } else { "" },
+            "docs_count": docs.len(),
+            "has_pdf": active.as_ref().map(|d| st.doc_pdf_path(d.id).is_file()).unwrap_or(false),
+            "pdf_url": active.as_ref()
+                .filter(|d| st.doc_pdf_path(d.id).is_file())
+                .map(|d| format!("/api/documents/{}/pdf", d.id))
+                .unwrap_or_default(),
+            "active_document_id": active.as_ref().map(|d| d.id),
         })),
+        "documents": docs_json,
+        "active_document": active_json,
         "fiches_count": fiches.len(),
         "quiz_questions": quiz_count,
         "progression": st.db.progression_snapshot().await.map_err(ApiError::from)?,
+        "rules": {
+            "scope": "one_course_many_docs",
+            "glossary": "spans all documents (shared course corpus)",
+            "fiches": "generated from concatenated corpus of all docs",
+            "quiz": "generated from concatenated corpus of all docs",
+            "progression": "pages opened per document + course total",
+        },
     })))
 }
 
@@ -143,45 +189,100 @@ async fn import_pdf(
     }
 
     let extracted = pdf::extract_text(&filename, &bytes).map_err(|e| ApiError::bad(e.to_string()))?;
-    if let Some(parent) = st.pdf_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| ApiError::from(anyhow::anyhow!(e)))?;
-    }
-    std::fs::write(&st.pdf_path, &bytes).map_err(|e| ApiError::from(anyhow::anyhow!(e)))?;
-
-    let course = st
+    let doc = st
         .db
-        .upsert_course(&extracted.filename, &extracted.text)
+        .add_document(&extracted.filename, &extracted.text)
         .await
         .map_err(ApiError::from)?;
 
+    let dir = st.docs_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| ApiError::from(anyhow::anyhow!(e)))?;
+    let path = st.doc_pdf_path(doc.id);
+    std::fs::write(&path, &bytes).map_err(|e| ApiError::from(anyhow::anyhow!(e)))?;
+
+    // Keep legacy course.pdf as copy of active for older clients.
+    if doc.active {
+        let legacy = st.data_dir.join("course.pdf");
+        let _ = std::fs::write(&legacy, &bytes);
+    }
+
+    let docs = st.db.list_documents().await.map_err(ApiError::from)?;
     Ok(Json(json!({
         "ok": true,
-        "filename": course.filename,
+        "document": doc_summary(&doc, &st),
+        "documents": docs.iter().map(|d| doc_summary(d, &st)).collect::<Vec<_>>(),
+        "filename": doc.filename,
         "char_count": extracted.char_count,
         "preview": extracted.text.chars().take(400).collect::<String>(),
-        "l1": course.l1,
-        "l2": course.l2,
         "has_pdf": true,
-        "pdf_url": "/api/course/pdf",
+        "pdf_url": format!("/api/documents/{}/pdf", doc.id),
+        "note": "Document ajouté au cours. Glossaire / fiches / quiz portent sur le corpus de tous les PDFs.",
     })))
 }
 
-async fn course_pdf(State(st): State<Arc<AppState>>) -> Result<Response, ApiError> {
-    let course = st
+async fn list_documents(
+    State(st): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let docs = st.db.list_documents().await.map_err(ApiError::from)?;
+    Ok(Json(json!({
+        "documents": docs.iter().map(|d| doc_summary(d, &st)).collect::<Vec<_>>(),
+        "count": docs.len(),
+    })))
+}
+
+async fn activate_document(
+    State(st): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let doc = st
         .db
-        .get_course()
+        .set_active_document(id)
+        .await
+        .map_err(|e| ApiError::bad(e.to_string()))?;
+    let path = st.doc_pdf_path(doc.id);
+    if path.is_file() {
+        let _ = std::fs::copy(&path, st.data_dir.join("course.pdf"));
+    }
+    Ok(Json(json!({
+        "ok": true,
+        "document": doc_summary(&doc, &st),
+        "pdf_url": if path.is_file() { format!("/api/documents/{}/pdf", doc.id) } else { String::new() },
+    })))
+}
+
+async fn delete_document(
+    State(st): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let path = st.doc_pdf_path(id);
+    st.db
+        .delete_document(id)
+        .await
+        .map_err(|e| ApiError::bad(e.to_string()))?;
+    let _ = std::fs::remove_file(&path);
+    let docs = st.db.list_documents().await.map_err(ApiError::from)?;
+    let active = st.db.active_document().await.map_err(ApiError::from)?;
+    Ok(Json(json!({
+        "ok": true,
+        "documents": docs.iter().map(|d| doc_summary(d, &st)).collect::<Vec<_>>(),
+        "active_document": active.as_ref().map(|d| doc_summary(d, &st)),
+    })))
+}
+
+async fn serve_doc_pdf(st: &AppState, id: i64) -> Result<Response, ApiError> {
+    let doc = st
+        .db
+        .get_document(id)
         .await
         .map_err(ApiError::from)?
-        .ok_or_else(|| ApiError::not_found("Aucun cours"))?;
-    if course.filename.is_empty() || course.text.trim().is_empty() {
-        return Err(ApiError::not_found("Aucun PDF importé"));
-    }
-    let bytes = std::fs::read(&st.pdf_path).map_err(|_| {
-        ApiError::not_found("Fichier PDF absent — réimportez le cours")
+        .ok_or_else(|| ApiError::not_found("Document introuvable"))?;
+    let path = st.doc_pdf_path(id);
+    let bytes = std::fs::read(&path).map_err(|_| {
+        ApiError::not_found("Fichier PDF absent — réimportez ce document")
     })?;
     let disposition = format!(
         "inline; filename=\"{}\"",
-        course.filename.replace('"', "")
+        doc.filename.replace('"', "")
     );
     Ok(Response::builder()
         .status(StatusCode::OK)
@@ -190,6 +291,23 @@ async fn course_pdf(State(st): State<Arc<AppState>>) -> Result<Response, ApiErro
         .header(header::CACHE_CONTROL, "no-store")
         .body(Body::from(bytes))
         .unwrap())
+}
+
+async fn document_pdf(
+    State(st): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> Result<Response, ApiError> {
+    serve_doc_pdf(&st, id).await
+}
+
+async fn course_pdf(State(st): State<Arc<AppState>>) -> Result<Response, ApiError> {
+    let doc = st
+        .db
+        .active_document()
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError::not_found("Aucun document"))?;
+    serve_doc_pdf(&st, doc.id).await
 }
 
 #[derive(Deserialize)]
@@ -342,6 +460,8 @@ struct OpenPageBody {
     page: i64,
     #[serde(default)]
     total_pages: Option<i64>,
+    #[serde(default)]
+    doc_id: Option<i64>,
 }
 
 async fn open_page(
@@ -351,12 +471,22 @@ async fn open_page(
     if body.page < 1 {
         return Err(ApiError::bad("page doit être ≥ 1"));
     }
+    let doc_id = match body.doc_id {
+        Some(id) if id > 0 => id,
+        _ => st
+            .db
+            .active_document()
+            .await
+            .map_err(ApiError::from)?
+            .map(|d| d.id)
+            .ok_or_else(|| ApiError::bad("Aucun document actif"))?,
+    };
     st.db
-        .mark_page_opened(body.page, body.total_pages)
+        .mark_page_opened(doc_id, body.page, body.total_pages)
         .await
         .map_err(ApiError::from)?;
     let snap = st.db.progression_snapshot().await.map_err(ApiError::from)?;
-    Ok(Json(json!({ "ok": true, "progression": snap })))
+    Ok(Json(json!({ "ok": true, "doc_id": doc_id, "progression": snap })))
 }
 
 #[derive(Deserialize)]
