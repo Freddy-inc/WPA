@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::db::Db;
-use crate::generate::{self, GenerationResult};
+use crate::generate::{self, material_sufficient_for_quiz, GenerationResult};
 use crate::glossary::{self, GlossaryResult};
 use crate::llm::LlmClient;
 use crate::pdf;
@@ -300,16 +300,40 @@ async fn update_fiche(
 }
 
 async fn get_quiz(State(st): State<Arc<AppState>>) -> Result<Json<serde_json::Value>, ApiError> {
+    let course = st.db.get_course().await.map_err(ApiError::from)?;
+    let has_course = course
+        .as_ref()
+        .map(|c| !c.text.trim().is_empty())
+        .unwrap_or(false);
+    let sufficient = course
+        .as_ref()
+        .map(|c| material_sufficient_for_quiz(&c.text))
+        .unwrap_or(false);
+    let (_, last) = st.db.quiz_attempt_stats().await.map_err(ApiError::from)?;
+    let last_score = last.map(|(s, t)| json!({ "score": s, "total": t }));
+
     match st.db.get_quiz().await.map_err(ApiError::from)? {
         Some(q) => {
-            let questions: serde_json::Value =
-                serde_json::from_str(&q.questions_json).unwrap_or(json!([]));
+            let questions: Vec<serde_json::Value> =
+                serde_json::from_str(&q.questions_json).unwrap_or_default();
             Ok(Json(json!({
+                "ready": !questions.is_empty(),
+                "blocked": !sufficient,
+                "has_course": has_course,
+                "question_count": questions.len(),
                 "questions": questions,
                 "created_at": q.created_at,
+                "last_score": last_score,
             })))
         }
-        None => Ok(Json(json!({ "questions": [] }))),
+        None => Ok(Json(json!({
+            "ready": false,
+            "blocked": has_course && !sufficient,
+            "has_course": has_course,
+            "question_count": 0,
+            "questions": [],
+            "last_score": last_score,
+        }))),
     }
 }
 

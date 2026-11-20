@@ -28,6 +28,14 @@ pub enum GenerationResult {
     },
 }
 
+/// Minimum extractable course text for quiz generation (covers "matériel insuffisant").
+pub const MIN_QUIZ_MATERIAL_CHARS: usize = 120;
+pub const MIN_QUIZ_QUESTIONS: usize = 4;
+
+pub fn material_sufficient_for_quiz(text: &str) -> bool {
+    text.chars().filter(|c| !c.is_whitespace()).count() >= MIN_QUIZ_MATERIAL_CHARS
+}
+
 pub async fn generate(
     db: &Db,
     llm: &LlmClient,
@@ -43,9 +51,18 @@ pub async fn generate(
 
     let l1 = course.l1.as_deref().unwrap_or("fr");
     let l2 = course.l2.as_deref().unwrap_or("en");
-    // Keep chunks short for free-tier TPM.
+    // Keep chunks short for free-tier TPM; use more text for quiz coverage.
     let chunks = chunk_text(&course.text, 2500);
-    let material = chunks.first().cloned().unwrap_or(course.text.clone());
+    let material = if kind == "quiz" {
+        chunks
+            .iter()
+            .take(3)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    } else {
+        chunks.first().cloned().unwrap_or(course.text.clone())
+    };
 
     match kind {
         "fiches" | "flashcards" => {
@@ -54,9 +71,16 @@ pub async fn generate(
             Ok(GenerationResult::Fiches { fiches: rows })
         }
         "quiz" => {
+            if !material_sufficient_for_quiz(&course.text) {
+                return Err(anyhow!(
+                    "Quiz indisponible : matériel insuffisant pour générer des questions"
+                ));
+            }
             let questions = generate_quiz(llm, &material, l1, l2).await?;
-            if questions.is_empty() {
-                return Err(anyhow!("Matériel insuffisant pour générer des questions"));
+            if questions.len() < MIN_QUIZ_QUESTIONS {
+                return Err(anyhow!(
+                    "Quiz indisponible : matériel insuffisant pour générer des questions"
+                ));
             }
             let json = serde_json::to_string(&questions)?;
             db.save_quiz(&json).await?;
@@ -119,8 +143,8 @@ async fn generate_quiz(
         "You create a multiple-choice quiz from course text. \
          Student L1={l1}, course language L2={l2}. \
          Return JSON only: {{\"questions\":[{{\"question\":\"...\",\"choices\":[\"A\",\"B\",\"C\",\"D\"],\"answer_index\":0,\"notion\":\"...\"}}]}}. \
-         Produce 5 to 8 questions covering the excerpt. answer_index is 0-based. \
-         Questions may be in L2; keep them anchored to the excerpt."
+         Produce 6 to 10 questions covering as much of the excerpt as possible (full-course coverage intent). \
+         answer_index is 0-based. Questions may be in L2; stay anchored to the excerpt; no generic trivia."
     );
     let user = json!({ "course_excerpt": material }).to_string();
     let v = llm.chat_json(ModelRole::Batch, &system, &user).await?;

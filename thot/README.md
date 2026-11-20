@@ -88,7 +88,7 @@ Reference UX: Apple **Aperçu / Preview** (iPhone / macOS) — rendered pages, s
 - `LlmClient` OpenAI-compatible: Groq → Ollama → stub
 - Glossary: LLM draft → Wiktionary + Wikipedia → reconcile → SQLite cache + sources badge
 - **Mes fiches**: empty state + CTAs, list with aperçu recto, edit recto/verso + save, revise (flip)
-- Generation of **either** fiches **or** quiz from extracted text; interactive quiz → score
+- **Quiz**: launch screen, blocked if insufficient material, Q one-by-one + Quit, results + feedback, replay; last score on progression
 - Fiche edits persist and feed progression count
 
 ## Still out of slice

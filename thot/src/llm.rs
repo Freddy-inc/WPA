@@ -320,6 +320,18 @@ fn stub_response(system: &str, user: &str) -> String {
                     "choices": ["Stroma", "Mitochondria", "Vacuole", "Cytoplasm only"],
                     "answer_index": 0,
                     "notion": "Calvin cycle"
+                },
+                {
+                    "question": "[STUB] What are the main inputs of photosynthesis?",
+                    "choices": ["CO₂ and water", "Nitrogen only", "Salt and sand", "Helium"],
+                    "answer_index": 0,
+                    "notion": "inputs"
+                },
+                {
+                    "question": "[STUB] Where is chemical energy stored after photosynthesis?",
+                    "choices": ["As glucose", "As pure heat", "As sound", "As magnetic fields"],
+                    "answer_index": 0,
+                    "notion": "glucose"
                 }
             ]
         })

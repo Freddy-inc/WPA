@@ -409,12 +409,25 @@
     </section>
 
     <section id="generate">
-      <h2>4. Quiz</h2>
-      <p class="meta">Questions tirées du PDF · ordre aléatoire à chaque tentative.</p>
-      <div class="actions">
-        <button type="button" id="quizBtn">Générer / lancer le quiz</button>
+      <h2>4. Quiz du cours</h2>
+      <div id="quizLaunch">
+        <p>Questions tirées de votre PDF.</p>
+        <p class="meta">Ordre aléatoire à chaque tentative · couverture : ensemble du cours.</p>
+        <p class="meta" id="quizLastScore">Aucune tentative pour l’instant.</p>
+        <div class="actions">
+          <button type="button" id="quizStartBtn">Commencer</button>
+          <button type="button" class="ghost" id="quizCancelBtn">Annuler</button>
+        </div>
+        <div id="genMsg"></div>
       </div>
-      <div id="genMsg"></div>
+      <div id="quizBlocked" class="empty-state" hidden>
+        <p><strong>Quiz indisponible</strong></p>
+        <p>Matériel insuffisant pour générer des questions.</p>
+        <div class="actions">
+          <button type="button" id="quizBlockedPdf">Continuer la lecture</button>
+          <button type="button" class="secondary" id="quizBlockedFiches">Fiches</button>
+        </div>
+      </div>
       <div id="quizOut"></div>
     </section>
 
@@ -512,6 +525,7 @@
         }
         renderProgression(s.progression);
         await loadFichesList();
+        await refreshQuizLaunch();
       } catch (e) {
         $("provider").textContent = "API indisponible";
       }
@@ -944,21 +958,81 @@
       }
     }
 
-    async function generateQuiz() {
-      $("quizBtn").disabled = true;
-      setMsg($("genMsg"), "Génération du quiz…", true);
+    function showQuizLaunch() {
+      $("quizLaunch").hidden = false;
+      $("quizBlocked").hidden = true;
+      $("quizOut").innerHTML = "";
+      setMsg($("genMsg"), "", true);
+    }
+
+    function showQuizBlocked(msg) {
+      $("quizLaunch").hidden = true;
+      $("quizBlocked").hidden = false;
+      $("quizOut").innerHTML = "";
+      if (msg) {
+        $("quizBlocked").querySelector("p:nth-of-type(2)").textContent = msg;
+      }
+    }
+
+    async function refreshQuizLaunch() {
       try {
-        const data = await api("/api/generate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ kind: "quiz" }),
-        });
-        startQuiz(data.questions || []);
-        setMsg($("genMsg"), `${data.count} questions — répondez pour enregistrer le score`, true);
+        const data = await api("/api/quiz");
+        if (data.last_score) {
+          $("quizLastScore").textContent =
+            `Dernière tentative : ${data.last_score.score}/${data.last_score.total}`;
+        } else {
+          $("quizLastScore").textContent = "Aucune tentative pour l’instant.";
+        }
+        if (data.blocked) {
+          showQuizBlocked("Matériel insuffisant pour générer des questions.");
+        } else {
+          $("quizLaunch").hidden = false;
+          $("quizBlocked").hidden = true;
+        }
+        return data;
       } catch (e) {
         setMsg($("genMsg"), e.message, false);
+        return null;
+      }
+    }
+
+    async function ensureQuizQuestions() {
+      const status = await api("/api/quiz");
+      if (status.blocked) {
+        showQuizBlocked("Matériel insuffisant pour générer des questions.");
+        return null;
+      }
+      if ((status.questions || []).length) return status.questions;
+      setMsg($("genMsg"), "Génération du quiz…", true);
+      const data = await api("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: "quiz" }),
+      });
+      return data.questions || [];
+    }
+
+    async function beginQuizFlow() {
+      $("quizStartBtn").disabled = true;
+      $("quizLaunch").hidden = false;
+      $("quizBlocked").hidden = true;
+      try {
+        const questions = await ensureQuizQuestions();
+        if (!questions) return;
+        if (!questions.length) {
+          showQuizBlocked("Matériel insuffisant pour générer des questions.");
+          return;
+        }
+        startQuiz(questions);
+      } catch (e) {
+        const msg = e.message || "";
+        if (/insuffisant|indisponible/i.test(msg)) {
+          showQuizBlocked(msg);
+        } else {
+          setMsg($("genMsg"), msg, false);
+        }
       } finally {
-        $("quizBtn").disabled = false;
+        $("quizStartBtn").disabled = false;
       }
     }
 
@@ -972,10 +1046,21 @@
       quizIndex = 0;
       quizAnswers = [];
       if (!quizQuestions.length) {
-        $("quizOut").innerHTML = `<p class="err">Aucune question</p>`;
+        showQuizBlocked("Matériel insuffisant pour générer des questions.");
         return;
       }
+      $("quizLaunch").hidden = true;
+      $("quizBlocked").hidden = true;
       renderQuizQuestion();
+    }
+
+    function quitQuiz() {
+      if (!window.confirm("Abandonner cette tentative ? Aucun score ne sera enregistré.")) {
+        return;
+      }
+      showQuizLaunch();
+      refreshQuizLaunch();
+      setMsg($("genMsg"), "Tentative annulée — pas de score.", true);
     }
 
     function renderQuizQuestion() {
@@ -985,7 +1070,10 @@
         .join("");
       $("quizOut").innerHTML = `
         <div class="quiz-q">
-          <div class="meta">Quiz · Q ${quizIndex + 1} / ${quizQuestions.length}</div>
+          <div class="actions" style="justify-content:space-between;margin-top:0">
+            <span class="meta">Quiz · Q ${quizIndex + 1} / ${quizQuestions.length}</span>
+            <button type="button" class="ghost" id="quizQuit">Quitter</button>
+          </div>
           <strong>${escapeHtml(q.question)}</strong>
           <ul>${choices}</ul>
           <div class="actions">
@@ -994,6 +1082,7 @@
           <div id="quizStepMsg"></div>
         </div>
       `;
+      $("quizQuit").onclick = quitQuiz;
       $("quizValidate").onclick = () => {
         const picked = document.querySelector('input[name="quizChoice"]:checked');
         if (!picked) {
@@ -1022,10 +1111,14 @@
       }).join("");
       $("quizOut").innerHTML = `
         <div class="quiz-q">
-          <strong>Résultat : ${score} / ${total}</strong>
-          ${feedback}
+          <h3 style="font-family:var(--font-display);margin:0 0 0.5rem">Résultat</h3>
+          <div class="value" style="font-size:1.25rem;font-weight:600">Score : ${score} / ${total}</div>
+          <div style="margin-top:0.75rem">${feedback}</div>
           <div class="actions">
             <button type="button" id="quizReplay">Rejouer</button>
+            <button type="button" class="secondary" id="quizToFiches">Fiches</button>
+            <button type="button" class="secondary" id="quizToProg">Progression</button>
+            <button type="button" class="ghost" id="quizToPdf">Retour au PDF</button>
           </div>
         </div>
       `;
@@ -1036,17 +1129,31 @@
           body: JSON.stringify({ score, total }),
         });
         if (res.progression) renderProgression(res.progression);
-        setMsg($("genMsg"), `Score enregistré : ${score}/${total}`, true);
+        $("quizLastScore").textContent = `Dernière tentative : ${score}/${total}`;
       } catch (e) {
         setMsg($("genMsg"), e.message, false);
       }
       $("quizReplay").onclick = () => startQuiz(quizQuestions.slice());
-      $("progression").scrollIntoView({ behavior: "smooth", block: "nearest" });
+      $("quizToFiches").onclick = () => {
+        $("fichesSection").scrollIntoView({ behavior: "smooth", block: "start" });
+      };
+      $("quizToProg").onclick = () => {
+        $("progression").scrollIntoView({ behavior: "smooth", block: "start" });
+      };
+      $("quizToPdf").onclick = scrollToPdf;
     }
 
     $("fichesBtn").onclick = () => generateFiches();
     $("emptyGenBtn").onclick = () => generateFiches();
-    $("quizBtn").onclick = () => generateQuiz();
+    $("quizStartBtn").onclick = () => beginQuizFlow();
+    $("quizCancelBtn").onclick = () => {
+      showQuizLaunch();
+      $("progression").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    };
+    $("quizBlockedPdf").onclick = scrollToPdf;
+    $("quizBlockedFiches").onclick = () => {
+      $("fichesSection").scrollIntoView({ behavior: "smooth", block: "start" });
+    };
 
     $("ctaReread").onclick = () => {
       if ($("readerSection").classList.contains("visible")) {
@@ -1065,17 +1172,8 @@
     };
     $("ctaQuiz").onclick = async () => {
       $("generate").scrollIntoView({ behavior: "smooth", block: "start" });
-      try {
-        const data = await api("/api/quiz");
-        if ((data.questions || []).length) {
-          startQuiz(data.questions);
-          setMsg($("genMsg"), "Reprise du quiz (nouvel ordre)", true);
-        } else {
-          $("progMsg").textContent = "Aucun quiz — générez-en d'abord.";
-        }
-      } catch (e) {
-        $("progMsg").textContent = e.message;
-      }
+      showQuizLaunch();
+      await refreshQuizLaunch();
     };
 
     refreshStatus();
