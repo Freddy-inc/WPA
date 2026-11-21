@@ -2,9 +2,9 @@
 
 Rust (`axum`) backend + HTML demo for the Thot study loop:
 
-**Create/switch courses → import PDFs (per course) → read → Sens → fiches *or* quiz.**
+**Create/switch courses → import PDFs (per course) → read → Sens → fiches *or* quiz → podcast overview.**
 
-Many independent courses. Each course owns its documents, glossary cache, fiches, quiz, and progression. Within a course: many PDFs; glossary / fiches / quiz span that course's corpus only.
+Many independent courses. Each course owns its documents, glossary cache, fiches, quiz, podcasts, and progression. Within a course: many PDFs; glossary / fiches / quiz / podcast span that course's corpus only.
 
 Free AI only: **Groq** when `GROQ_API_KEY` is set, else fallback `Etude`, else `Etudes` (WPA runtime secret). Otherwise **Ollama**. Stub mode for demos without either. Health reports which env name was present — never the secret.
 
@@ -41,7 +41,7 @@ Open **http://127.0.0.1:8787/**
 | `THOT_PORT` | `8787` | HTTP port |
 | `THOT_DATA_DIR` | `data` | SQLite + `docs/{id}.pdf` |
 | `THOT_GROQ_INTERACTIVE_MODEL` | `openai/gpt-oss-20b` | Glossary model |
-| `THOT_GROQ_BATCH_MODEL` | `openai/gpt-oss-120b` | Fiches / quiz model |
+| `THOT_GROQ_BATCH_MODEL` | `openai/gpt-oss-120b` | Fiches / quiz / podcast script model |
 | `THOT_OLLAMA_BASE` | `http://127.0.0.1:11434/v1` | Ollama OpenAI base |
 | `THOT_OLLAMA_MODEL` | `qwen2.5` | Local model id |
 | `THOT_LLM_STUB` | _(off)_ | `1` = deterministic stub responses |
@@ -115,6 +115,10 @@ Reference UX: Apple **Aperçu / Preview** (iPhone / macOS) — rendered pages, s
 | `GET` | `/api/quiz` | — | Stored quiz |
 | `POST` | `/api/quiz/attempt` | `{ "score","total" }` | Record quiz attempt |
 | `POST` | `/api/quiz/remediate` | `{ "misses":[{question,notion,correct_answer,chosen_answer}] }` | Append remédiation fiches for misses (LLM + course context) |
+| `GET` | `/api/podcasts` | — | List course podcast overviews |
+| `POST` | `/api/podcasts/generate` | — | Groq two-voice script + edge-tts MP3 (or Web Speech fallback) |
+| `GET` | `/api/podcasts/{id}` | — | Podcast + parsed script |
+| `GET` | `/api/podcasts/{id}/audio` | — | MP3 bytes when `playback_mode=mp3` |
 | `POST` | `/api/pages/open` | `{ "page","total_pages?","doc_id?" }` | Mark page opened for a doc |
 | `GET` | `/api/progression` | — | Per-doc + total lecture / fiches / quiz |
 
@@ -137,11 +141,12 @@ Reference UX: Apple **Aperçu / Preview** (iPhone / macOS) — rendered pages, s
 - **Remédiation**: after quiz misses, show wrong answers + generate targeted new fiches (appended, not wipe) via Groq + course PDF context
 - Fiches / quiz generation: LLM (Groq) with course excerpt + effective L1/L2 (global or course override)
 - Fiche edits persist and feed progression count
+- **Podcast**: two-voice overview from course PDF (Groq script) + **edge-tts** MP3 (free) or Web Speech fallback; listed per course; **no mic retention**
 
 ## Still out of slice
 
 - Async job queue / quota UX polish for 429s
-- Audio, SRS, paid AI providers
+- Live mic tutoring, heavy SRS, paid AI providers
 
 ## Layout
 
@@ -149,8 +154,9 @@ Reference UX: Apple **Aperçu / Preview** (iPhone / macOS) — rendered pages, s
 thot/
   Cargo.toml
   README.md
-  src/           # pdf, llm, web_verify, glossary, generate, db, api
+  scripts/       # podcast_tts.py (edge-tts)
+  src/           # pdf, llm, web_verify, glossary, generate, podcast, db, api
   static/        # demo UI + vendor/pdfjs
   fixtures/      # sample PDF
-  data/          # created at runtime (gitignored)
+  data/          # created at runtime (gitignored) — docs/ + podcasts/
 ```

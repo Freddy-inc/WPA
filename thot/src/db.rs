@@ -172,6 +172,15 @@ impl Db {
                 l1 TEXT,
                 l2 TEXT
             );
+            CREATE TABLE IF NOT EXISTS podcasts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                course_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                script_json TEXT NOT NULL,
+                audio_relpath TEXT,
+                playback_mode TEXT NOT NULL DEFAULT 'webspeech',
+                created_at TEXT NOT NULL
+            );
             "#,
         )
         .execute(&self.pool)
@@ -832,6 +841,10 @@ impl Db {
             .bind(id)
             .execute(&self.pool)
             .await?;
+        sqlx::query("DELETE FROM podcasts WHERE course_id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
         let was_active = self
             .get_course_by_id(id)
             .await?
@@ -1325,6 +1338,88 @@ impl Db {
             docs_count: docs.len() as i64,
         })
     }
+
+    pub async fn insert_podcast(
+        &self,
+        title: &str,
+        script_json: &str,
+        audio_relpath: Option<&str>,
+        playback_mode: &str,
+    ) -> Result<PodcastRow> {
+        let course_id = self.active_course_id().await?;
+        let created = now_iso();
+        let res = sqlx::query(
+            "INSERT INTO podcasts (course_id, title, script_json, audio_relpath, playback_mode, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(course_id)
+        .bind(title)
+        .bind(script_json)
+        .bind(audio_relpath)
+        .bind(playback_mode)
+        .bind(&created)
+        .execute(&self.pool)
+        .await?;
+        let id = res.last_insert_rowid();
+        self.get_podcast(id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("podcast missing after insert"))
+    }
+
+    pub async fn update_podcast_audio(
+        &self,
+        id: i64,
+        audio_relpath: Option<&str>,
+        playback_mode: &str,
+    ) -> Result<Option<PodcastRow>> {
+        let course_id = self.active_course_id().await?;
+        sqlx::query(
+            "UPDATE podcasts SET audio_relpath = ?, playback_mode = ? WHERE id = ? AND course_id = ?",
+        )
+        .bind(audio_relpath)
+        .bind(playback_mode)
+        .bind(id)
+        .bind(course_id)
+        .execute(&self.pool)
+        .await?;
+        self.get_podcast(id).await
+    }
+
+    pub async fn list_podcasts(&self) -> Result<Vec<PodcastRow>> {
+        let course_id = self.active_course_id().await?;
+        let rows = sqlx::query_as::<_, PodcastRow>(
+            "SELECT id, course_id, title, script_json, audio_relpath, playback_mode, created_at
+             FROM podcasts WHERE course_id = ? ORDER BY id DESC",
+        )
+        .bind(course_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    pub async fn get_podcast(&self, id: i64) -> Result<Option<PodcastRow>> {
+        let course_id = self.active_course_id().await?;
+        let row = sqlx::query_as::<_, PodcastRow>(
+            "SELECT id, course_id, title, script_json, audio_relpath, playback_mode, created_at
+             FROM podcasts WHERE id = ? AND course_id = ?",
+        )
+        .bind(id)
+        .bind(course_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct PodcastRow {
+    pub id: i64,
+    pub course_id: i64,
+    pub title: String,
+    pub script_json: String,
+    pub audio_relpath: Option<String>,
+    pub playback_mode: String,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

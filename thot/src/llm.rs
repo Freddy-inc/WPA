@@ -384,6 +384,29 @@ fn stub_response(system: &str, user: &str) -> String {
         .to_string();
     }
 
+    // Two-voice podcast overview
+    if blob.contains("two-host study podcast")
+        || blob.contains("\"turns\"")
+            && blob.contains("speaker")
+            && blob.contains("notebooklm-like")
+        || blob.contains("audio overview for international students")
+    {
+        return json!({
+            "title": "[STUB] Aperçu audio du cours",
+            "turns": [
+                {"speaker": "A", "text": "Bonjour — aujourd’hui on fait un aperçu rapide de la photosynthèse."},
+                {"speaker": "B", "text": "D’accord. C’est quoi l’idée centrale ?"},
+                {"speaker": "A", "text": "Les plantes transforment la lumière en énergie chimique, surtout du glucose."},
+                {"speaker": "B", "text": "Et le pigment vert, c’est la chlorophylle ?"},
+                {"speaker": "A", "text": "Oui. Elle absorbe la lumière dans les thylakoïdes."},
+                {"speaker": "B", "text": "Et après, le cycle de Calvin ?"},
+                {"speaker": "A", "text": "Il fixe le carbone dans le stroma et produit des glucides."},
+                {"speaker": "B", "text": "Parfait — je retenais surtout lumière, chlorophylle, glucose."}
+            ]
+        })
+        .to_string();
+    }
+
     // Quiz remédiation fiches
     if blob.contains("remédiation") || blob.contains("remediation") || blob.contains("missed quiz") {
         return json!({

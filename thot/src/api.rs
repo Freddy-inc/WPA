@@ -17,6 +17,7 @@ use crate::generate::{self, material_sufficient_for_quiz, GenerationResult, Quiz
 use crate::glossary::{self, GlossaryResult};
 use crate::llm::LlmClient;
 use crate::pdf;
+use crate::podcast;
 use crate::web_verify::WebVerifier;
 
 #[derive(Clone)]
@@ -60,6 +61,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/quiz", get(get_quiz))
         .route("/api/quiz/attempt", post(quiz_attempt))
         .route("/api/quiz/remediate", post(quiz_remediate))
+        .route("/api/podcasts", get(list_podcasts))
+        .route("/api/podcasts/generate", post(generate_podcast))
+        .route("/api/podcasts/{id}", get(get_podcast))
+        .route("/api/podcasts/{id}/audio", get(podcast_audio))
         .route("/api/pages/open", post(open_page))
         .route("/api/progression", get(progression))
         .with_state(Arc::new(state))
@@ -867,6 +872,78 @@ async fn progression(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let snap = st.db.progression_snapshot().await.map_err(ApiError::from)?;
     Ok(Json(json!(snap)))
+}
+
+async fn list_podcasts(
+    State(st): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let podcasts = st.db.list_podcasts().await.map_err(ApiError::from)?;
+    Ok(Json(json!({
+        "podcasts": podcasts,
+        "count": podcasts.len(),
+        "note": "Generated overviews of the course PDF corpus. No microphone audio is recorded.",
+    })))
+}
+
+async fn generate_podcast(
+    State(st): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let row = podcast::generate_podcast(&st.db, &st.llm, &st.data_dir)
+        .await
+        .map_err(map_llm_err)?;
+    Ok(Json(json!({
+        "ok": true,
+        "podcast": row,
+        "playback_mode": row.playback_mode,
+    })))
+}
+
+async fn get_podcast(
+    State(st): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let row = st
+        .db
+        .get_podcast(id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError::not_found("podcast introuvable"))?;
+    let script: serde_json::Value =
+        serde_json::from_str(&row.script_json).unwrap_or_else(|_| json!({ "turns": [] }));
+    Ok(Json(json!({
+        "podcast": row,
+        "script": script,
+    })))
+}
+
+async fn podcast_audio(
+    State(st): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> Result<Response, ApiError> {
+    let row = st
+        .db
+        .get_podcast(id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError::not_found("podcast introuvable"))?;
+    let rel = row
+        .audio_relpath
+        .as_deref()
+        .ok_or_else(|| ApiError::not_found("pas de fichier audio — utilisez la lecture Web Speech"))?;
+    let path = st.data_dir.join(rel);
+    if !path.is_file() {
+        return Err(ApiError::not_found("fichier audio manquant"));
+    }
+    let bytes = std::fs::read(&path).map_err(|e| ApiError::from(anyhow::anyhow!(e)))?;
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "audio/mpeg")
+        .header(
+            header::CONTENT_DISPOSITION,
+            format!("inline; filename=\"thot-podcast-{id}.mp3\""),
+        )
+        .body(Body::from(bytes))
+        .unwrap_or_else(|_| Response::new(Body::empty())))
 }
 
 /* ---------- errors ---------- */

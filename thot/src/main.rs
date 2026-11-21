@@ -6,6 +6,7 @@ mod generate;
 mod glossary;
 mod llm;
 mod pdf;
+mod podcast;
 mod web_verify;
 
 use std::net::SocketAddr;

@@ -664,6 +664,22 @@
       </div>
     </section>
 
+    <section id="podcastSection">
+      <h2>Podcast</h2>
+      <p class="meta">Aperçu audio à deux voix du corpus PDF (style NotebookLM). Script via Groq · voix gratuites (edge-tts) ou Web Speech. Aucun micro n’est enregistré.</p>
+      <div class="actions">
+        <button type="button" id="podcastGenBtn">Générer un aperçu</button>
+        <button type="button" class="ghost" id="podcastStopBtn" hidden>Stop</button>
+      </div>
+      <div id="podcastMsg"></div>
+      <div id="podcastPlayer" class="fiche-panel" hidden style="margin-top:0.75rem">
+        <p class="meta" id="podcastNowTitle"></p>
+        <audio id="podcastAudio" controls style="width:100%;margin:0.4rem 0"></audio>
+        <div id="podcastScriptPreview" class="meta" style="max-height:9rem;overflow:auto;white-space:pre-wrap"></div>
+      </div>
+      <div id="podcastList" class="fiche-list" style="margin-top:0.75rem"></div>
+    </section>
+
     <section id="generate">
       <h2>Quiz</h2>
       <div id="quizLaunch">
@@ -849,6 +865,7 @@
         renderProgression(s.progression);
         await loadFichesList();
         await refreshQuizLaunch();
+        await loadPodcasts();
       } catch (e) {
         $("provider").textContent = "API indisponible";
       }
@@ -1814,6 +1831,147 @@
         $("progression").scrollIntoView({ behavior: "smooth", block: "start" });
       };
       $("quizToPdf").onclick = scrollToPdf;
+    }
+
+    let podcastSpeechQueue = [];
+    let podcastSpeaking = false;
+
+    function stopPodcastPlayback() {
+      const audio = $("podcastAudio");
+      try { audio.pause(); audio.removeAttribute("src"); audio.load(); } catch (_) {}
+      if (window.speechSynthesis) speechSynthesis.cancel();
+      podcastSpeechQueue = [];
+      podcastSpeaking = false;
+      $("podcastStopBtn").hidden = true;
+    }
+
+    function renderPodcastScript(script) {
+      const turns = (script && script.turns) || [];
+      return turns
+        .map((t) => `${t.speaker === "B" ? "B" : "A"}: ${t.text || ""}`)
+        .join("\n\n");
+    }
+
+    function playPodcastWebSpeech(script) {
+      if (!window.speechSynthesis) {
+        throw new Error("Web Speech API indisponible dans ce navigateur");
+      }
+      stopPodcastPlayback();
+      const voices = speechSynthesis.getVoices() || [];
+      const pick = (preferFemale) => {
+        const lang = (document.documentElement.lang || "fr").slice(0, 2);
+        const pool = voices.filter((v) => (v.lang || "").toLowerCase().startsWith(lang));
+        const list = pool.length ? pool : voices;
+        if (!list.length) return null;
+        if (preferFemale) {
+          return list.find((v) => /female|woman|zira|denise|jenny|elvira|katja/i.test(v.name)) || list[0];
+        }
+        return list.find((v) => /male|man|guy|henri|david|alvaro|conrad/i.test(v.name)) || list[Math.min(1, list.length - 1)];
+      };
+      const voiceA = pick(true);
+      const voiceB = pick(false);
+      podcastSpeechQueue = ((script && script.turns) || []).map((t) => {
+        const u = new SpeechSynthesisUtterance(t.text || "");
+        const isB = String(t.speaker || "A").toUpperCase().startsWith("B");
+        u.voice = isB ? voiceB : voiceA;
+        u.rate = isB ? 1.02 : 0.98;
+        u.pitch = isB ? 0.9 : 1.05;
+        return u;
+      });
+      const next = () => {
+        if (!podcastSpeechQueue.length) {
+          podcastSpeaking = false;
+          $("podcastStopBtn").hidden = true;
+          return;
+        }
+        podcastSpeaking = true;
+        $("podcastStopBtn").hidden = false;
+        const u = podcastSpeechQueue.shift();
+        u.onend = next;
+        u.onerror = next;
+        speechSynthesis.speak(u);
+      };
+      next();
+    }
+
+    async function playPodcast(id) {
+      stopPodcastPlayback();
+      const data = await api(`/api/podcasts/${id}`);
+      const row = data.podcast || {};
+      const script = data.script || {};
+      $("podcastPlayer").hidden = false;
+      $("podcastNowTitle").textContent = `${row.title || "Podcast"} · mode ${row.playback_mode || "?"}`;
+      $("podcastScriptPreview").textContent = renderPodcastScript(script);
+      if (row.playback_mode === "mp3" && row.audio_relpath) {
+        const audio = $("podcastAudio");
+        audio.src = `/api/podcasts/${id}/audio`;
+        audio.hidden = false;
+        $("podcastStopBtn").hidden = false;
+        try { await audio.play(); } catch (_) {}
+      } else {
+        $("podcastAudio").hidden = true;
+        playPodcastWebSpeech(script);
+      }
+    }
+
+    function renderPodcastList(podcasts) {
+      const el = $("podcastList");
+      if (!podcasts.length) {
+        el.innerHTML = `<div class="empty-state"><p>Aucun podcast pour ce cours.</p></div>`;
+        return;
+      }
+      el.innerHTML = podcasts.map((p) => {
+        const mode = p.playback_mode === "mp3" ? "MP3" : "Web Speech";
+        return `<div class="fiche-row">
+          <div>
+            <strong>${escapeHtml(p.title || "Podcast")}</strong>
+            <div class="meta">${escapeHtml(mode)} · ${escapeHtml((p.created_at || "").slice(0, 19))}</div>
+          </div>
+          <button type="button" class="secondary podcast-play" data-id="${p.id}">Écouter</button>
+        </div>`;
+      }).join("");
+      el.querySelectorAll(".podcast-play").forEach((btn) => {
+        btn.onclick = () => playPodcast(Number(btn.dataset.id)).catch((e) => {
+          setMsg($("podcastMsg"), e.message, false);
+        });
+      });
+    }
+
+    async function loadPodcasts() {
+      try {
+        const data = await api("/api/podcasts");
+        renderPodcastList(data.podcasts || []);
+      } catch (_) {
+        $("podcastList").innerHTML = "";
+      }
+    }
+
+    async function generatePodcast() {
+      setMsg($("podcastMsg"), "Génération du script (Groq) puis synthèse vocale…", true);
+      $("podcastGenBtn").disabled = true;
+      try {
+        const data = await api("/api/podcasts/generate", { method: "POST" });
+        const p = data.podcast || {};
+        setMsg(
+          $("podcastMsg"),
+          data.playback_mode === "mp3"
+            ? "Podcast prêt (MP3 edge-tts)."
+            : "Script prêt — lecture via Web Speech (TTS serveur indisponible).",
+          true
+        );
+        await loadPodcasts();
+        if (p.id) await playPodcast(p.id);
+      } catch (e) {
+        setMsg($("podcastMsg"), e.message, false);
+      } finally {
+        $("podcastGenBtn").disabled = false;
+      }
+    }
+
+    $("podcastGenBtn").onclick = () => generatePodcast();
+    $("podcastStopBtn").onclick = () => stopPodcastPlayback();
+    if (window.speechSynthesis) {
+      speechSynthesis.onvoiceschanged = () => speechSynthesis.getVoices();
     }
 
     $("fichesBtn").onclick = () => generateFiches();
