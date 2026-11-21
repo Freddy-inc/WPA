@@ -681,9 +681,13 @@
       </div>
       <div class="viewer-hint">Sélectionnez un mot ou une <strong>phrase</strong> dans le PDF — Sens donne le sens L1 (phrase entière + mots), Copier, Fermer.</div>
       <div class="vocab-legend" id="vocabLegend" hidden>
-        <span><span class="swatch review"></span>à revoir (fiches)</span>
-        <span><span class="swatch known"></span>connu (glossaire vérifié)</span>
+        <span><span class="swatch review"></span>à revoir</span>
+        <span><span class="swatch known"></span>connu</span>
         <span class="meta" id="vocabCounts" style="margin:0"></span>
+        <label style="display:inline-flex;align-items:center;gap:0.3rem;margin:0;color:var(--muted);font-size:0.8rem">
+          <input type="checkbox" id="vocabHighlightToggle" checked />
+          Surbrillance
+        </label>
       </div>
       <div id="pdfScroll"></div>
       <div class="captures-strip" id="capturesStrip">
@@ -728,6 +732,10 @@
         <label for="ficheBack">Verso</label>
         <textarea id="ficheBack" rows="4"></textarea>
         <p class="meta" id="ficheOrigin">Origine : auto</p>
+        <div class="actions" style="margin-top:0.5rem">
+          <button type="button" class="secondary" id="ficheMarkReview">Marquer à revoir</button>
+          <button type="button" class="secondary" id="ficheMarkKnown">Marquer connu</button>
+        </div>
         <div id="ficheSaveMsg"></div>
       </div>
 
@@ -821,6 +829,8 @@
     <div class="sel-actions">
       <button type="button" class="primary" id="selSense">Sens</button>
       <button type="button" class="save" id="selSaveFiche" disabled title="Capturer dans Mes fiches">+ Fiche</button>
+      <button type="button" class="muted" id="selMarkReview" disabled title="Marquer à revoir">À revoir</button>
+      <button type="button" class="muted" id="selMarkKnown" disabled title="Marquer connu">Connu</button>
       <button type="button" class="muted" id="selCopy">Copier</button>
       <button type="button" class="muted" id="selClose">Fermer</button>
     </div>
@@ -846,6 +856,10 @@
     let quizAnswers = [];
     let fichesCache = [];
     let vocabStatus = {}; // term -> "review" | "known"
+    let vocabHighlightOn = localStorage.getItem("thot_vocab_hl") !== "0";
+    let lastMissNotions = [];
+    const MIN_VOCAB_TOKEN_LEN = 4;
+    const MAX_VOCAB_TERM_WORDS = 4;
     let editingFicheId = null;
     let reviseIndex = 0;
     let reviseFlipped = false;
@@ -1312,6 +1326,15 @@
         .join(" ");
     }
 
+    function isHighlightableTerm(key) {
+      if (!key || key.includes("?")) return false;
+      const words = key.split(" ").filter(Boolean);
+      if (!words.length || words.length > MAX_VOCAB_TERM_WORDS) return false;
+      const stop = new Set(["what","which","where","when","how","why","quel","quelle","the","a","an","les","des","une","un","de","du","la","le"]);
+      if (stop.has(words[0])) return false;
+      return words.some((w) => [...w].length >= MIN_VOCAB_TOKEN_LEN);
+    }
+
     async function refreshVocabStatus() {
       try {
         const data = await api("/api/vocab-status");
@@ -1320,7 +1343,9 @@
         const counts = $("vocabCounts");
         const nR = data.review_count || 0;
         const nK = data.known_count || 0;
-        if (nR + nK > 0) {
+        const toggle = $("vocabHighlightToggle");
+        if (toggle) toggle.checked = vocabHighlightOn;
+        if (nR + nK > 0 || Object.keys(vocabStatus).length) {
           legend.hidden = false;
           counts.textContent = `${nR} à revoir · ${nK} connus`;
         } else {
@@ -1334,29 +1359,35 @@
 
     function applyVocabHighlights(textLayerDiv) {
       if (!textLayerDiv) return;
-      const entries = Object.entries(vocabStatus);
-      if (!entries.length) return;
-      // Longer phrases first so multi-word fiche fronts win.
-      entries.sort((a, b) => b[0].length - a[0].length || a[0].localeCompare(b[0]));
       const spans = [...textLayerDiv.querySelectorAll("span")];
+      for (const span of spans) span.classList.remove("ws-review", "ws-known");
+      if (!vocabHighlightOn) return;
+      const entries = Object.entries(vocabStatus).filter(([t]) => isHighlightableTerm(t));
+      if (!entries.length) return;
+      entries.sort((a, b) => b[0].length - a[0].length || a[0].localeCompare(b[0]));
       for (const span of spans) {
-        span.classList.remove("ws-review", "ws-known");
         const raw = (span.textContent || "").trim();
         if (!raw) continue;
         const norm = normalizeVocabKey(raw);
         if (!norm) continue;
-        let status = vocabStatus[norm] || null;
-        if (!status) {
-          // Whole-word token match inside the span
-          const tokens = norm.split(" ");
+        const tokens = norm.split(" ").filter(Boolean);
+        // Precision: never tint long PDF.js lines (orange wall).
+        if (tokens.length > 6) continue;
+
+        let status = null;
+        // Exact span == term
+        if (vocabStatus[norm] && isHighlightableTerm(norm)) {
+          status = vocabStatus[norm];
+        } else {
           for (const [term, st] of entries) {
             const parts = term.split(" ");
             if (parts.length === 1) {
-              if (tokens.includes(term)) {
+              // Single-token term: only if span is short (≤3 tokens) and contains it.
+              if (tokens.length <= 3 && tokens.includes(term)) {
                 status = st;
                 if (st === "review") break;
               }
-            } else if (norm.includes(term)) {
+            } else if (tokens.length <= parts.length + 1 && norm.includes(term)) {
               status = st;
               if (st === "review") break;
             }
@@ -1365,6 +1396,19 @@
         if (status === "review") span.classList.add("ws-review");
         else if (status === "known") span.classList.add("ws-known");
       }
+    }
+
+    async function markVocabStatus(term, status) {
+      const t = normalizeVocabKey(term) || String(term || "").trim();
+      if (!t) throw new Error("terme vide");
+      await api("/api/vocab-status", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ term: t, status }),
+      });
+      await refreshVocabStatus();
+      const layer = document.querySelector("#pdfScroll .textLayer");
+      if (layer) applyVocabHighlights(layer);
     }
 
     function ficheChipLabel(front) {
@@ -1417,6 +1461,8 @@
       menuPinned = false;
       lastGlossary = null;
       $("selSaveFiche").disabled = true;
+      $("selMarkReview").disabled = true;
+      $("selMarkKnown").disabled = true;
       $("selSaveMsg").hidden = true;
       $("selSaveMsg").textContent = "";
       $("selBody").textContent = "Sélectionnez « Sens » pour la définition L1.";
@@ -1426,6 +1472,8 @@
       lastSelection = term;
       lastGlossary = null;
       $("selSaveFiche").disabled = true;
+      $("selMarkReview").disabled = !term;
+      $("selMarkKnown").disabled = !term;
       $("selSaveMsg").hidden = true;
       $("selSaveMsg").textContent = "";
       $("selTerm").textContent = `L2 · ${term}`;
@@ -1490,6 +1538,9 @@
     function renderGlossaryResult(g) {
       lastGlossary = g;
       $("selSaveFiche").disabled = !(g && (g.meaning_l1 || g.phrase_sense_l1));
+      const markTerm = (g && g.term_l2) || lastSelection;
+      $("selMarkReview").disabled = !markTerm;
+      $("selMarkKnown").disabled = !markTerm;
       $("selSaveMsg").hidden = true;
       const verified = !!g.verified;
       const badgeClass = verified ? "ok" : "warn";
@@ -1553,12 +1604,17 @@
           renderFichesList();
         }
         if (res.progression) renderProgression(res.progression);
+        try {
+          await markVocabStatus(front, "review");
+        } catch (_) {
+          await loadRecentCaptures();
+          await refreshVocabStatus();
+          const layer = document.querySelector("#pdfScroll .textLayer");
+          if (layer) applyVocabHighlights(layer);
+        }
         await loadRecentCaptures();
-        await refreshVocabStatus();
-        const layer = document.querySelector("#pdfScroll .textLayer");
-        if (layer) applyVocabHighlights(layer);
         $("selSaveMsg").hidden = false;
-        $("selSaveMsg").textContent = "Ajouté à Mes fiches (avec contexte).";
+        $("selSaveMsg").textContent = "Ajouté à Mes fiches · marqué à revoir.";
       } catch (e) {
         $("selSaveMsg").hidden = false;
         $("selSaveMsg").style.color = "#f5b4b0";
@@ -1566,6 +1622,23 @@
         $("selSaveFiche").disabled = false;
       }
     };
+
+    async function markFromSens(status) {
+      const term = (lastGlossary && lastGlossary.term_l2) || lastSelection || "";
+      if (!term.trim()) return;
+      try {
+        await markVocabStatus(term, status);
+        $("selSaveMsg").hidden = false;
+        $("selSaveMsg").style.color = "";
+        $("selSaveMsg").textContent = status === "known" ? "Marqué connu." : "Marqué à revoir.";
+      } catch (e) {
+        $("selSaveMsg").hidden = false;
+        $("selSaveMsg").style.color = "#f5b4b0";
+        $("selSaveMsg").textContent = e.message || "Échec marquage";
+      }
+    }
+    $("selMarkKnown").onclick = () => markFromSens("known");
+    $("selMarkReview").onclick = () => markFromSens("review");
 
     $("selSense").onclick = async () => {
       const term = (lastSelection || "").trim();
@@ -1972,6 +2045,9 @@
             <h4>Remédiation</h4>
             <p class="meta" id="remediationStatus">${misses.length ? "Préparation de fiches ciblées…" : ""}</p>
             <div id="remediationFiches"></div>
+            <div class="actions" id="remediationQuizActions" ${misses.length ? "" : "hidden"} style="margin-top:0.55rem">
+              <button type="button" id="quizTargetedBtn">Quiz ciblé (notions manquées)</button>
+            </div>
           </div>
           <div class="actions">
             <button type="button" id="quizReplay">Rejouer</button>
@@ -1993,6 +2069,10 @@
         setMsg($("genMsg"), e.message, false);
       }
 
+      lastMissNotions = misses
+        .map((m) => (m.notion || "").trim() || (m.question || "").trim())
+        .filter(Boolean);
+
       if (misses.length) {
         try {
           const rem = await api("/api/quiz/remediate", {
@@ -2001,6 +2081,9 @@
             body: JSON.stringify({ misses }),
           });
           const newFiches = rem.fiches || [];
+          if (Array.isArray(rem.notions) && rem.notions.length) {
+            lastMissNotions = rem.notions;
+          }
           if (rem.progression) renderProgression(rem.progression);
           if (newFiches.length) {
             fichesCache = [...fichesCache, ...newFiches];
@@ -2034,6 +2117,30 @@
       }
 
       $("quizReplay").onclick = () => startQuiz(quizQuestions.slice());
+      const targetedBtn = $("quizTargetedBtn");
+      if (targetedBtn) {
+        targetedBtn.onclick = async () => {
+          targetedBtn.disabled = true;
+          const statusEl = $("remediationStatus");
+          if (statusEl) statusEl.textContent = "Préparation du quiz ciblé…";
+          try {
+            const data = await api("/api/quiz/targeted", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ notions: lastMissNotions, misses }),
+            });
+            const qs = data.questions || [];
+            if (!qs.length) throw new Error("Aucune question ciblée");
+            if (statusEl) {
+              statusEl.textContent = `Quiz ciblé · ${qs.length} question${qs.length > 1 ? "s" : ""} sur les notions manquées.`;
+            }
+            startQuiz(qs);
+          } catch (e) {
+            if (statusEl) statusEl.textContent = e.message || "Quiz ciblé indisponible";
+            targetedBtn.disabled = false;
+          }
+        };
+      }
       $("quizToFiches").onclick = () => {
         $("fichesSection").scrollIntoView({ behavior: "smooth", block: "start" });
       };
@@ -2188,6 +2295,32 @@
     $("emptyGenBtn").onclick = () => generateFiches();
     $("exportCsvBtn").onclick = () => downloadExport("csv");
     $("exportAnkiBtn").onclick = () => downloadExport("anki");
+    $("vocabHighlightToggle").onchange = () => {
+      vocabHighlightOn = !!$("vocabHighlightToggle").checked;
+      localStorage.setItem("thot_vocab_hl", vocabHighlightOn ? "1" : "0");
+      const layer = document.querySelector("#pdfScroll .textLayer");
+      if (layer) applyVocabHighlights(layer);
+    };
+    $("ficheMarkReview").onclick = async () => {
+      const term = ($("ficheFront").value || "").trim();
+      if (!term) return;
+      try {
+        await markVocabStatus(term, "review");
+        setMsg($("ficheSaveMsg"), "Marqué à revoir.", true);
+      } catch (e) {
+        setMsg($("ficheSaveMsg"), e.message, false);
+      }
+    };
+    $("ficheMarkKnown").onclick = async () => {
+      const term = ($("ficheFront").value || "").trim();
+      if (!term) return;
+      try {
+        await markVocabStatus(term, "known");
+        setMsg($("ficheSaveMsg"), "Marqué connu.", true);
+      } catch (e) {
+        setMsg($("ficheSaveMsg"), e.message, false);
+      }
+    };
     $("quizStartBtn").onclick = () => beginQuizFlow();
     $("quizCancelBtn").onclick = () => {
       showQuizLaunch();

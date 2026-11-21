@@ -181,6 +181,13 @@ impl Db {
                 playback_mode TEXT NOT NULL DEFAULT 'webspeech',
                 created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS term_status (
+                course_id INTEGER NOT NULL,
+                term_l2 TEXT NOT NULL COLLATE NOCASE,
+                status TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (course_id, term_l2)
+            );
             "#,
         )
         .execute(&self.pool)
@@ -845,6 +852,10 @@ impl Db {
             .bind(id)
             .execute(&self.pool)
             .await?;
+        sqlx::query("DELETE FROM term_status WHERE course_id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
         let was_active = self
             .get_course_by_id(id)
             .await?
@@ -1089,6 +1100,51 @@ impl Db {
         .fetch_optional(&self.pool)
         .await?;
         Ok(row)
+    }
+
+    pub async fn list_term_statuses(&self) -> Result<Vec<TermStatusRow>> {
+        let course_id = self.active_course_id().await?;
+        let rows = sqlx::query_as::<_, TermStatusRow>(
+            "SELECT course_id, term_l2, status, updated_at FROM term_status WHERE course_id = ?",
+        )
+        .bind(course_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    pub async fn upsert_term_status(&self, term_l2: &str, status: &str) -> Result<TermStatusRow> {
+        let course_id = self.active_course_id().await?;
+        let now = now_iso();
+        let status = status.trim().to_lowercase();
+        if status != "known" && status != "review" {
+            anyhow::bail!("status invalide (known|review)");
+        }
+        let term = term_l2.trim();
+        if term.is_empty() {
+            anyhow::bail!("terme requis");
+        }
+        sqlx::query(
+            "INSERT INTO term_status (course_id, term_l2, status, updated_at) VALUES (?, ?, ?, ?)
+             ON CONFLICT(course_id, term_l2) DO UPDATE SET
+               status = excluded.status,
+               updated_at = excluded.updated_at",
+        )
+        .bind(course_id)
+        .bind(term)
+        .bind(&status)
+        .bind(&now)
+        .execute(&self.pool)
+        .await?;
+        sqlx::query_as::<_, TermStatusRow>(
+            "SELECT course_id, term_l2, status, updated_at FROM term_status
+             WHERE course_id = ? AND term_l2 = ? COLLATE NOCASE",
+        )
+        .bind(course_id)
+        .bind(term)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("term_status missing after upsert"))
     }
 
     pub async fn list_glossary(&self) -> Result<Vec<GlossaryRow>> {
@@ -1437,6 +1493,14 @@ impl Db {
         .await?;
         Ok(row)
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct TermStatusRow {
+    pub course_id: i64,
+    pub term_l2: String,
+    pub status: String,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]

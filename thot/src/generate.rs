@@ -143,6 +143,77 @@ pub async fn remediate_misses(
     db.append_fiches(&pairs).await
 }
 
+/// Quiz covering only the given notions: filter stored quiz first, then LLM fill if thin.
+pub async fn targeted_quiz(
+    db: &Db,
+    llm: &LlmClient,
+    notions: &[String],
+) -> Result<Vec<QuizQuestion>> {
+    if notions.is_empty() {
+        return Err(anyhow!("notions vides"));
+    }
+    let course = db
+        .get_course()
+        .await?
+        .ok_or_else(|| anyhow!("Aucun cours — importez un PDF d'abord"))?;
+    if !material_sufficient_for_quiz(&course.text) {
+        return Err(anyhow!(
+            "Quiz ciblé indisponible : matériel insuffisant"
+        ));
+    }
+    let (l1, l2, _) = db.effective_languages_for(&course).await.map_err(|e| anyhow!("{e}"))?;
+
+    let mut selected: Vec<QuizQuestion> = Vec::new();
+    if let Some(qrow) = db.get_quiz().await? {
+        let existing: Vec<QuizQuestion> =
+            serde_json::from_str(&qrow.questions_json).unwrap_or_default();
+        for q in existing {
+            if notion_matches(&q.notion, notions) || notion_matches(&q.question, notions) {
+                selected.push(q);
+            }
+        }
+    }
+
+    if selected.len() < 2 {
+        let chunks = chunk_text(&course.text, 2500);
+        let material = chunks
+            .iter()
+            .take(3)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let material = if material.is_empty() {
+            course.text.clone()
+        } else {
+            material
+        };
+        let generated =
+            generate_targeted_quiz(llm, &course.title, &material, notions, &l1, &l2).await?;
+        for q in generated {
+            if !selected.iter().any(|e| e.question == q.question) {
+                selected.push(q);
+            }
+        }
+    }
+
+    if selected.is_empty() {
+        return Err(anyhow!(
+            "Impossible de construire un quiz ciblé pour ces notions"
+        ));
+    }
+    // Cap to keep the remédiation loop short.
+    selected.truncate(8);
+    Ok(selected)
+}
+
+fn notion_matches(hay: &str, notions: &[String]) -> bool {
+    let h = hay.to_lowercase();
+    notions.iter().any(|n| {
+        let n = n.trim().to_lowercase();
+        !n.is_empty() && (h.contains(&n) || n.contains(&h))
+    })
+}
+
 async fn generate_fiches(
     llm: &LlmClient,
     course_title: &str,
@@ -221,6 +292,76 @@ async fn generate_quiz(
         .and_then(|a| a.as_array())
         .ok_or_else(|| anyhow!("réponse quiz invalide"))?;
 
+    let mut out = Vec::new();
+    for item in arr {
+        let question = item
+            .get("question")
+            .and_then(|s| s.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let choices: Vec<String> = item
+            .get("choices")
+            .and_then(|c| c.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(|s| s.trim().to_string()))
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let answer_index = item
+            .get("answer_index")
+            .and_then(|i| i.as_u64())
+            .unwrap_or(0) as usize;
+        let notion = item
+            .get("notion")
+            .and_then(|s| s.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if question.is_empty() || choices.len() < 2 || answer_index >= choices.len() {
+            continue;
+        }
+        out.push(QuizQuestion {
+            question,
+            choices,
+            answer_index,
+            notion,
+        });
+    }
+    Ok(out)
+}
+
+async fn generate_targeted_quiz(
+    llm: &LlmClient,
+    course_title: &str,
+    material: &str,
+    notions: &[String],
+    l1: &str,
+    l2: &str,
+) -> Result<Vec<QuizQuestion>> {
+    let system = format!(
+        "You are an AI remédiation coach. Create a SHORT multiple-choice quiz that ONLY covers \
+         the listed missed notions from THIS course PDF excerpt. \
+         Student L1={l1}, course language L2={l2}. \
+         Return JSON only: {{\"questions\":[{{\"question\":\"...\",\"choices\":[\"A\",\"B\",\"C\",\"D\"],\"answer_index\":0,\"notion\":\"...\"}}]}}. \
+         Produce 3 to 6 questions. Each question's notion MUST match one of the missed notions. \
+         Stay faithful to the excerpt."
+    );
+    let user = json!({
+        "course_title": course_title,
+        "course_excerpt": material,
+        "missed_notions": notions,
+        "l1": l1,
+        "l2": l2,
+    })
+    .to_string();
+    let v = llm.chat_json(ModelRole::Batch, &system, &user).await?;
+    let arr = v
+        .get("questions")
+        .and_then(|a| a.as_array())
+        .ok_or_else(|| anyhow!("réponse quiz ciblé invalide"))?;
     let mut out = Vec::new();
     for item in arr {
         let question = item

@@ -384,6 +384,33 @@ fn stub_response(system: &str, user: &str) -> String {
         .to_string();
     }
 
+    // Targeted remédiation quiz
+    if blob.contains("missed notions") || blob.contains("SHORT multiple-choice quiz that ONLY covers") {
+        return json!({
+            "questions": [
+                {
+                    "question": "[STUB] Targeted: what pigment absorbs light?",
+                    "choices": ["Keratin", "Chlorophyll", "Melanin", "Hemoglobin"],
+                    "answer_index": 1,
+                    "notion": "chlorophyll"
+                },
+                {
+                    "question": "[STUB] Targeted: where do light reactions occur?",
+                    "choices": ["Nucleus", "Stroma", "Thylakoid membrane", "Cell wall"],
+                    "answer_index": 2,
+                    "notion": "thylakoid"
+                },
+                {
+                    "question": "[STUB] Targeted: main sugar product?",
+                    "choices": ["Glucose", "Salt", "Helium", "Cellulose only"],
+                    "answer_index": 0,
+                    "notion": "glucose"
+                }
+            ]
+        })
+        .to_string();
+    }
+
     // Two-voice podcast overview
     if blob.contains("two-host study podcast")
         || blob.contains("\"turns\"")

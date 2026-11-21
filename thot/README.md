@@ -114,7 +114,9 @@ Reference UX: Apple **Aperçu / Preview** (iPhone / macOS) — rendered pages, s
 | `GET` | `/api/fiches/export?format=csv\|anki` | — | Download CSV or Anki-import TSV |
 | `GET` | `/api/fiches/{id}` | — | One fiche |
 | `PUT` | `/api/fiches/{id}` | `{ "front","back" }` | Edit recto/verso (marks edited) |
-| `GET` | `/api/vocab-status` | — | Term → `review`\|`known` for PDF highlight |
+| `GET` | `/api/vocab-status` | — | Term → `review`\|`known` (explicit marks + short fiches + verified glossary) |
+| `PUT` | `/api/vocab-status` | `{ "term","status":"known"\|"review" }` | Mark Connu / À revoir |
+| `POST` | `/api/quiz/targeted` | `{ "notions":[], "misses"? }` | Quiz limited to missed notions |
 | `GET` | `/api/quiz` | — | Stored quiz |
 | `POST` | `/api/quiz/attempt` | `{ "score","total" }` | Record quiz attempt |
 | `POST` | `/api/quiz/remediate` | `{ "misses":[{question,notion,correct_answer,chosen_answer}] }` | Append remédiation fiches for misses (LLM + course context) |
@@ -146,6 +148,7 @@ Reference UX: Apple **Aperçu / Preview** (iPhone / macOS) — rendered pages, s
 - Fiche edits persist and feed progression count
 - **Podcast**: two-voice overview from course PDF (Groq script) + **edge-tts** MP3 (free) or Web Speech fallback; listed per course; **no mic retention**
 - **P1 vocab UX**: word status in PDF (à revoir / connu), « Derniers capturés » strip, Export CSV + Anki TSV
+- **P0 audit**: precise highlights (+ Surbrillance off), mark Connu/À revoir from Sens/fiche, remédiation → **Quiz ciblé**
 
 ## Still out of slice
 

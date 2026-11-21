@@ -60,10 +60,11 @@ pub fn router(state: AppState) -> Router {
         .route("/api/fiches/recent", get(recent_fiches))
         .route("/api/fiches/export", get(export_fiches))
         .route("/api/fiches/{id}", get(get_fiche).put(update_fiche))
-        .route("/api/vocab-status", get(vocab_status))
+        .route("/api/vocab-status", get(vocab_status).put(set_vocab_status))
         .route("/api/quiz", get(get_quiz))
         .route("/api/quiz/attempt", post(quiz_attempt))
         .route("/api/quiz/remediate", post(quiz_remediate))
+        .route("/api/quiz/targeted", post(quiz_targeted))
         .route("/api/podcasts", get(list_podcasts))
         .route("/api/podcasts/generate", post(generate_podcast))
         .route("/api/podcasts/{id}", get(get_podcast))
@@ -689,34 +690,65 @@ async fn recent_fiches(
 }
 
 /// Ling/Lute-style status for PDF text highlighting.
-/// `review` = term appears on a fiche (à revoir); `known` = verified glossary, not in fiches.
+/// Priority: explicit mark > short fiche front (review) > verified glossary (known).
 async fn vocab_status(
     State(st): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let fiches = st.db.list_fiches().await.map_err(ApiError::from)?;
     let glossary = st.db.list_glossary().await.map_err(ApiError::from)?;
+    let marked = st.db.list_term_statuses().await.map_err(ApiError::from)?;
 
     let mut terms: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
     let mut review_count = 0usize;
     let mut known_count = 0usize;
+    let mut marked_count = 0usize;
 
-    for f in &fiches {
-        for key in vocab_keys_from_front(&f.front) {
-            if terms.insert(key, json!("review")).is_none() {
+    // 1) Explicit user marks win.
+    for row in &marked {
+        let key = normalize_vocab_key(&row.term_l2);
+        if key.is_empty() || !is_highlightable_term(&key) {
+            continue;
+        }
+        let st_label = if row.status == "known" {
+            "known"
+        } else {
+            "review"
+        };
+        if terms.insert(key, json!(st_label)).is_none() {
+            marked_count += 1;
+            if st_label == "known" {
+                known_count += 1;
+            } else {
                 review_count += 1;
             }
         }
     }
+
+    // 2) Short fiche fronts → review (skip long/auto question-like fronts).
+    for f in &fiches {
+        for key in vocab_keys_from_front(&f.front) {
+            if !is_highlightable_term(&key) {
+                continue;
+            }
+            if terms.contains_key(&key) {
+                continue;
+            }
+            terms.insert(key, json!("review"));
+            review_count += 1;
+        }
+    }
+
+    // 3) Verified glossary → known if not already set.
     for g in &glossary {
         if !g.verified {
             continue;
         }
         let key = normalize_vocab_key(&g.term_l2);
-        if key.is_empty() {
+        if key.is_empty() || !is_highlightable_term(&key) {
             continue;
         }
         if terms.contains_key(&key) {
-            continue; // fiche (review) wins over known
+            continue;
         }
         terms.insert(key, json!("known"));
         known_count += 1;
@@ -726,10 +758,41 @@ async fn vocab_status(
         "terms": terms,
         "review_count": review_count,
         "known_count": known_count,
+        "marked_count": marked_count,
+        "min_token_len": MIN_VOCAB_TOKEN_LEN,
+        "max_term_words": MAX_VOCAB_TERM_WORDS,
         "legend": {
-            "review": "à revoir — présent dans Mes fiches",
-            "known": "connu — glossaire vérifié (hors fiches)",
+            "review": "à revoir — marqué ou fiche courte",
+            "known": "connu — marqué ou glossaire vérifié",
         }
+    })))
+}
+
+#[derive(Deserialize)]
+struct VocabStatusBody {
+    term: String,
+    /// "known" | "review"
+    status: String,
+}
+
+async fn set_vocab_status(
+    State(st): State<Arc<AppState>>,
+    Json(body): Json<VocabStatusBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let term = body.term.trim();
+    if term.is_empty() {
+        return Err(ApiError::bad("terme requis"));
+    }
+    let row = st
+        .db
+        .upsert_term_status(term, &body.status)
+        .await
+        .map_err(|e| ApiError::bad(e.to_string()))?;
+    Ok(Json(json!({
+        "ok": true,
+        "term": row.term_l2,
+        "status": row.status,
+        "updated_at": row.updated_at,
     })))
 }
 
@@ -803,34 +866,67 @@ fn anki_escape(s: &str) -> String {
     s.replace('\t', " ").replace('\n', "<br>").replace('\r', "")
 }
 
+const MIN_VOCAB_TOKEN_LEN: usize = 4;
+const MAX_VOCAB_TERM_WORDS: usize = 4;
+
 fn normalize_vocab_key(raw: &str) -> String {
     let mut s = raw.trim().to_lowercase();
-    for prefix in ["[sens]", "[remédiation]", "[remediation]", "[stub]"] {
+    for prefix in [
+        "[sens]",
+        "[remédiation]",
+        "[remediation]",
+        "[stub]",
+        "[remediation]",
+    ] {
         if s.starts_with(prefix) {
             s = s[prefix.len()..].trim().to_string();
         }
     }
     s.chars()
-        .map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' || c == '\'' { c } else { ' ' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == ' ' || c == '-' || c == '\'' {
+                c
+            } else {
+                ' '
+            }
+        })
         .collect::<String>()
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
 }
 
+fn is_highlightable_term(key: &str) -> bool {
+    if key.is_empty() || key.contains('?') {
+        return false;
+    }
+    let words: Vec<&str> = key.split_whitespace().collect();
+    if words.is_empty() || words.len() > MAX_VOCAB_TERM_WORDS {
+        return false;
+    }
+    // Drop question-like / sentence-like fronts from auto fiches.
+    const STOP: &[&str] = &[
+        "what", "which", "where", "when", "how", "why", "quel", "quelle", "quels", "quelles",
+        "qu", "est", "the", "a", "an", "les", "des", "une", "un", "de", "du", "la", "le",
+    ];
+    if words
+        .first()
+        .map(|w| STOP.contains(w))
+        .unwrap_or(false)
+    {
+        return false;
+    }
+    // At least one content token ≥ min length (allow short connectors like "de").
+    words.iter().any(|w| w.chars().count() >= MIN_VOCAB_TOKEN_LEN)
+}
+
 fn vocab_keys_from_front(front: &str) -> Vec<String> {
     let key = normalize_vocab_key(front);
-    if key.is_empty() {
+    if !is_highlightable_term(&key) {
         return vec![];
     }
-    let mut keys = vec![key.clone()];
-    // Also index first significant token for single-word highlight in PDF.
-    if let Some(first) = key.split_whitespace().next() {
-        if first.len() >= 3 && first != key {
-            keys.push(first.to_string());
-        }
-    }
-    keys
+    // Only the full short term — no first-token fan-out (that caused the orange wall).
+    vec![key]
 }
 
 #[derive(Deserialize)]
@@ -1022,11 +1118,69 @@ async fn quiz_remediate(
         .await
         .map_err(map_llm_err)?;
     let snap = st.db.progression_snapshot().await.map_err(ApiError::from)?;
+    let notions: Vec<String> = body
+        .misses
+        .iter()
+        .map(|m| {
+            let n = m.notion.trim();
+            if n.is_empty() {
+                m.question.clone()
+            } else {
+                n.to_string()
+            }
+        })
+        .filter(|s| !s.is_empty())
+        .collect();
     Ok(Json(json!({
         "ok": true,
         "fiches": fiches,
         "count": fiches.len(),
+        "notions": notions,
         "progression": snap,
+    })))
+}
+
+#[derive(Deserialize)]
+struct QuizTargetedBody {
+    /// Notion labels from missed quiz items.
+    notions: Vec<String>,
+    #[serde(default)]
+    misses: Vec<QuizMiss>,
+}
+
+/// Build a short quiz covering only missed notions (filter existing + optional LLM fill).
+async fn quiz_targeted(
+    State(st): State<Arc<AppState>>,
+    Json(body): Json<QuizTargetedBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let mut notions: Vec<String> = body
+        .notions
+        .iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    for m in &body.misses {
+        let n = m.notion.trim();
+        if !n.is_empty() {
+            notions.push(n.to_string());
+        }
+    }
+    notions.sort();
+    notions.dedup();
+    if notions.is_empty() {
+        return Err(ApiError::bad("notions requises pour un quiz ciblé"));
+    }
+
+    let questions = generate::targeted_quiz(&st.db, &st.llm, &notions)
+        .await
+        .map_err(map_llm_err)?;
+    Ok(Json(json!({
+        "ok": true,
+        "kind": "quiz",
+        "targeted": true,
+        "notions": notions,
+        "questions": questions,
+        "count": questions.len(),
     })))
 }
 
