@@ -1091,6 +1091,19 @@ impl Db {
         Ok(row)
     }
 
+    pub async fn list_glossary(&self) -> Result<Vec<GlossaryRow>> {
+        let course_id = self.active_course_id().await?;
+        let rows = sqlx::query_as::<_, GlossaryRow>(
+            r#"SELECT id, course_id, term_l2, meaning_l1, context_snippet, sources_json,
+                      verified, confidence, created_at
+               FROM glossary WHERE course_id = ? ORDER BY id DESC"#,
+        )
+        .bind(course_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
     pub async fn put_glossary(
         &self,
         term_l2: &str,
@@ -1181,6 +1194,21 @@ impl Db {
             "SELECT id, course_id, front, back, edited, created_at FROM fiches WHERE course_id = ? ORDER BY id",
         )
         .bind(course_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// Newest first — for « Derniers capturés » strip.
+    pub async fn list_fiches_recent(&self, limit: i64) -> Result<Vec<FicheRow>> {
+        let course_id = self.active_course_id().await?;
+        let lim = limit.clamp(1, 40);
+        let rows = sqlx::query_as::<_, FicheRow>(
+            "SELECT id, course_id, front, back, edited, created_at FROM fiches
+             WHERE course_id = ? ORDER BY id DESC LIMIT ?",
+        )
+        .bind(course_id)
+        .bind(lim)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows)

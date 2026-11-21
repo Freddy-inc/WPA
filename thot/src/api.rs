@@ -57,7 +57,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/glossary", post(define_glossary))
         .route("/api/generate", post(generate_content))
         .route("/api/fiches", get(list_fiches).post(create_fiche))
+        .route("/api/fiches/recent", get(recent_fiches))
+        .route("/api/fiches/export", get(export_fiches))
         .route("/api/fiches/{id}", get(get_fiche).put(update_fiche))
+        .route("/api/vocab-status", get(vocab_status))
         .route("/api/quiz", get(get_quiz))
         .route("/api/quiz/attempt", post(quiz_attempt))
         .route("/api/quiz/remediate", post(quiz_remediate))
@@ -668,6 +671,166 @@ async fn list_fiches(
         "fiches": fiches,
         "count": fiches.len(),
     })))
+}
+
+async fn recent_fiches(
+    State(st): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let fiches = st
+        .db
+        .list_fiches_recent(12)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(json!({
+        "fiches": fiches,
+        "count": fiches.len(),
+        "note": "Derniers capturés (Mes fiches, plus récentes d'abord)",
+    })))
+}
+
+/// Ling/Lute-style status for PDF text highlighting.
+/// `review` = term appears on a fiche (à revoir); `known` = verified glossary, not in fiches.
+async fn vocab_status(
+    State(st): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let fiches = st.db.list_fiches().await.map_err(ApiError::from)?;
+    let glossary = st.db.list_glossary().await.map_err(ApiError::from)?;
+
+    let mut terms: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
+    let mut review_count = 0usize;
+    let mut known_count = 0usize;
+
+    for f in &fiches {
+        for key in vocab_keys_from_front(&f.front) {
+            if terms.insert(key, json!("review")).is_none() {
+                review_count += 1;
+            }
+        }
+    }
+    for g in &glossary {
+        if !g.verified {
+            continue;
+        }
+        let key = normalize_vocab_key(&g.term_l2);
+        if key.is_empty() {
+            continue;
+        }
+        if terms.contains_key(&key) {
+            continue; // fiche (review) wins over known
+        }
+        terms.insert(key, json!("known"));
+        known_count += 1;
+    }
+
+    Ok(Json(json!({
+        "terms": terms,
+        "review_count": review_count,
+        "known_count": known_count,
+        "legend": {
+            "review": "à revoir — présent dans Mes fiches",
+            "known": "connu — glossaire vérifié (hors fiches)",
+        }
+    })))
+}
+
+#[derive(Deserialize)]
+struct ExportQuery {
+    /// `csv` (default) or `anki` (tab-separated for Anki import)
+    #[serde(default = "default_export_format")]
+    format: String,
+}
+
+fn default_export_format() -> String {
+    "csv".into()
+}
+
+async fn export_fiches(
+    State(st): State<Arc<AppState>>,
+    axum::extract::Query(q): axum::extract::Query<ExportQuery>,
+) -> Result<Response, ApiError> {
+    let fiches = st.db.list_fiches().await.map_err(ApiError::from)?;
+    let fmt = q.format.to_lowercase();
+    if fmt == "anki" || fmt == "tsv" {
+        let mut out = String::from("#separator:tab\n#html:false\n");
+        for f in &fiches {
+            out.push_str(&anki_escape(&f.front));
+            out.push('\t');
+            out.push_str(&anki_escape(&f.back));
+            out.push('\n');
+        }
+        return Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/tab-separated-values; charset=utf-8")
+            .header(
+                header::CONTENT_DISPOSITION,
+                "attachment; filename=\"thot-fiches-anki.txt\"",
+            )
+            .body(Body::from(out))
+            .unwrap_or_else(|_| Response::new(Body::empty())));
+    }
+    // CSV
+    let mut out = String::from("front,back,created_at,edited\n");
+    for f in &fiches {
+        out.push_str(&csv_escape(&f.front));
+        out.push(',');
+        out.push_str(&csv_escape(&f.back));
+        out.push(',');
+        out.push_str(&csv_escape(&f.created_at));
+        out.push(',');
+        out.push_str(if f.edited { "1" } else { "0" });
+        out.push('\n');
+    }
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/csv; charset=utf-8")
+        .header(
+            header::CONTENT_DISPOSITION,
+            "attachment; filename=\"thot-fiches.csv\"",
+        )
+        .body(Body::from(out))
+        .unwrap_or_else(|_| Response::new(Body::empty())))
+}
+
+fn csv_escape(s: &str) -> String {
+    if s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r') {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
+fn anki_escape(s: &str) -> String {
+    s.replace('\t', " ").replace('\n', "<br>").replace('\r', "")
+}
+
+fn normalize_vocab_key(raw: &str) -> String {
+    let mut s = raw.trim().to_lowercase();
+    for prefix in ["[sens]", "[remédiation]", "[remediation]", "[stub]"] {
+        if s.starts_with(prefix) {
+            s = s[prefix.len()..].trim().to_string();
+        }
+    }
+    s.chars()
+        .map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' || c == '\'' { c } else { ' ' })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn vocab_keys_from_front(front: &str) -> Vec<String> {
+    let key = normalize_vocab_key(front);
+    if key.is_empty() {
+        return vec![];
+    }
+    let mut keys = vec![key.clone()];
+    // Also index first significant token for single-word highlight in PDF.
+    if let Some(first) = key.split_whitespace().next() {
+        if first.len() >= 3 && first != key {
+            keys.push(first.to_string());
+        }
+    }
+    keys
 }
 
 #[derive(Deserialize)]

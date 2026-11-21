@@ -419,6 +419,75 @@
     }
     .textLayer span::selection { background: rgba(0, 100, 255, 0.28); }
     .textLayer span::-moz-selection { background: rgba(0, 100, 255, 0.28); }
+    /* Ling/Lute-style vocab status (text stays transparent; tint shows through) */
+    .textLayer span.ws-review {
+      background: rgba(212, 140, 28, 0.38);
+      border-radius: 2px;
+      box-decoration-break: clone;
+      -webkit-box-decoration-break: clone;
+    }
+    .textLayer span.ws-known {
+      background: rgba(32, 140, 96, 0.32);
+      border-radius: 2px;
+      box-decoration-break: clone;
+      -webkit-box-decoration-break: clone;
+    }
+    .vocab-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin: 0.35rem 0 0.15rem;
+    }
+    .vocab-legend .swatch {
+      display: inline-block;
+      width: 0.7rem;
+      height: 0.7rem;
+      border-radius: 2px;
+      margin-right: 0.3rem;
+      vertical-align: -0.05rem;
+    }
+    .vocab-legend .swatch.review { background: rgba(212, 140, 28, 0.55); }
+    .vocab-legend .swatch.known { background: rgba(32, 140, 96, 0.5); }
+    .captures-strip {
+      margin-top: 0.65rem;
+      padding: 0.55rem 0.65rem;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #f7faf8;
+    }
+    .captures-strip h3 {
+      margin: 0 0 0.4rem;
+      font-size: 0.92rem;
+      font-family: var(--font-display);
+    }
+    .captures-row {
+      display: flex;
+      gap: 0.45rem;
+      overflow-x: auto;
+      padding-bottom: 0.15rem;
+    }
+    .capture-chip {
+      flex: 0 0 auto;
+      max-width: 11rem;
+      padding: 0.35rem 0.55rem;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      font-size: 0.82rem;
+      cursor: pointer;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: var(--ink);
+    }
+    .capture-chip:hover { border-color: var(--accent); color: var(--accent); }
+    .capture-chip.empty {
+      cursor: default;
+      color: var(--muted);
+      border-style: dashed;
+    }
 
     /* Selection menu (mobile-like) */
     #selMenu {
@@ -611,7 +680,18 @@
         </div>
       </div>
       <div class="viewer-hint">Sélectionnez un mot ou une <strong>phrase</strong> dans le PDF — Sens donne le sens L1 (phrase entière + mots), Copier, Fermer.</div>
+      <div class="vocab-legend" id="vocabLegend" hidden>
+        <span><span class="swatch review"></span>à revoir (fiches)</span>
+        <span><span class="swatch known"></span>connu (glossaire vérifié)</span>
+        <span class="meta" id="vocabCounts" style="margin:0"></span>
+      </div>
       <div id="pdfScroll"></div>
+      <div class="captures-strip" id="capturesStrip">
+        <h3>Derniers capturés</h3>
+        <div class="captures-row" id="capturesRow">
+          <span class="capture-chip empty">Aucun capturé — utilisez + Fiche depuis Sens</span>
+        </div>
+      </div>
     </section>
 
     <section id="fichesSection">
@@ -620,6 +700,8 @@
       <div class="actions">
         <button type="button" id="fichesBtn">Générer fiches</button>
         <button type="button" class="secondary" id="reviseBtn" hidden>Réviser</button>
+        <button type="button" class="ghost" id="exportCsvBtn" title="Export CSV">Export CSV</button>
+        <button type="button" class="ghost" id="exportAnkiBtn" title="Export Anki (TSV)">Export Anki</button>
         <button type="button" class="ghost" id="fichesToPdf">Ouvrir le PDF</button>
       </div>
       <div id="fichesMsg"></div>
@@ -763,6 +845,7 @@
     let quizIndex = 0;
     let quizAnswers = [];
     let fichesCache = [];
+    let vocabStatus = {}; // term -> "review" | "known"
     let editingFicheId = null;
     let reviseIndex = 0;
     let reviseFlipped = false;
@@ -866,6 +949,10 @@
         await loadFichesList();
         await refreshQuizLaunch();
         await loadPodcasts();
+        await loadRecentCaptures();
+        await refreshVocabStatus();
+        const layer = document.querySelector("#pdfScroll .textLayer");
+        if (layer) applyVocabHighlights(layer);
       } catch (e) {
         $("provider").textContent = "API indisponible";
       }
@@ -1207,6 +1294,121 @@
         });
         if (res.progression) renderProgression(res.progression);
       } catch (_) { /* non-blocking */ }
+
+      await refreshVocabStatus();
+      applyVocabHighlights(textLayerDiv);
+      await loadRecentCaptures();
+    }
+
+    function normalizeVocabKey(raw) {
+      let s = String(raw || "").trim().toLowerCase();
+      for (const prefix of ["[sens]", "[remédiation]", "[remediation]", "[stub]"]) {
+        if (s.startsWith(prefix)) s = s.slice(prefix.length).trim();
+      }
+      return s
+        .replace(/[^\p{L}\p{N}\s\-']/gu, " ")
+        .split(/\s+/)
+        .filter(Boolean)
+        .join(" ");
+    }
+
+    async function refreshVocabStatus() {
+      try {
+        const data = await api("/api/vocab-status");
+        vocabStatus = data.terms || {};
+        const legend = $("vocabLegend");
+        const counts = $("vocabCounts");
+        const nR = data.review_count || 0;
+        const nK = data.known_count || 0;
+        if (nR + nK > 0) {
+          legend.hidden = false;
+          counts.textContent = `${nR} à revoir · ${nK} connus`;
+        } else {
+          legend.hidden = true;
+          counts.textContent = "";
+        }
+      } catch (_) {
+        vocabStatus = {};
+      }
+    }
+
+    function applyVocabHighlights(textLayerDiv) {
+      if (!textLayerDiv) return;
+      const entries = Object.entries(vocabStatus);
+      if (!entries.length) return;
+      // Longer phrases first so multi-word fiche fronts win.
+      entries.sort((a, b) => b[0].length - a[0].length || a[0].localeCompare(b[0]));
+      const spans = [...textLayerDiv.querySelectorAll("span")];
+      for (const span of spans) {
+        span.classList.remove("ws-review", "ws-known");
+        const raw = (span.textContent || "").trim();
+        if (!raw) continue;
+        const norm = normalizeVocabKey(raw);
+        if (!norm) continue;
+        let status = vocabStatus[norm] || null;
+        if (!status) {
+          // Whole-word token match inside the span
+          const tokens = norm.split(" ");
+          for (const [term, st] of entries) {
+            const parts = term.split(" ");
+            if (parts.length === 1) {
+              if (tokens.includes(term)) {
+                status = st;
+                if (st === "review") break;
+              }
+            } else if (norm.includes(term)) {
+              status = st;
+              if (st === "review") break;
+            }
+          }
+        }
+        if (status === "review") span.classList.add("ws-review");
+        else if (status === "known") span.classList.add("ws-known");
+      }
+    }
+
+    function ficheChipLabel(front) {
+      return String(front || "")
+        .replace(/^\[Sens\]\s*/i, "")
+        .replace(/^\[Remédiation\]\s*/i, "")
+        .replace(/^\[STUB\]\s*/i, "")
+        .trim();
+    }
+
+    function renderRecentCaptures(fiches) {
+      const row = $("capturesRow");
+      if (!fiches || !fiches.length) {
+        row.innerHTML = `<span class="capture-chip empty">Aucun capturé — utilisez + Fiche depuis Sens</span>`;
+        return;
+      }
+      row.innerHTML = fiches.map((f) => {
+        const label = ficheChipLabel(f.front);
+        return `<button type="button" class="capture-chip" data-id="${f.id}" title="${escapeHtml(label)}">${escapeHtml(label)}</button>`;
+      }).join("");
+      row.querySelectorAll(".capture-chip[data-id]").forEach((btn) => {
+        btn.onclick = () => {
+          $("fichesSection").scrollIntoView({ behavior: "smooth", block: "start" });
+          openFicheEditor(Number(btn.dataset.id));
+        };
+      });
+    }
+
+    async function loadRecentCaptures() {
+      try {
+        const data = await api("/api/fiches/recent");
+        renderRecentCaptures(data.fiches || []);
+      } catch (_) {
+        renderRecentCaptures([]);
+      }
+    }
+
+    function downloadExport(format) {
+      const a = document.createElement("a");
+      a.href = `/api/fiches/export?format=${encodeURIComponent(format)}`;
+      a.download = format === "anki" ? "thot-fiches-anki.txt" : "thot-fiches.csv";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
     }
 
     /* ---- Selection menu ---- */
@@ -1351,6 +1553,10 @@
           renderFichesList();
         }
         if (res.progression) renderProgression(res.progression);
+        await loadRecentCaptures();
+        await refreshVocabStatus();
+        const layer = document.querySelector("#pdfScroll .textLayer");
+        if (layer) applyVocabHighlights(layer);
         $("selSaveMsg").hidden = false;
         $("selSaveMsg").textContent = "Ajouté à Mes fiches (avec contexte).";
       } catch (e) {
@@ -1572,6 +1778,10 @@
         });
         fichesCache = data.fiches || [];
         renderFichesList();
+        await loadRecentCaptures();
+        await refreshVocabStatus();
+        const layer = document.querySelector("#pdfScroll .textLayer");
+        if (layer) applyVocabHighlights(layer);
         setMsg($("fichesMsg"), `${fichesCache.length} fiches générées`, true);
         await refreshProgression();
       } catch (e) {
@@ -1976,6 +2186,8 @@
 
     $("fichesBtn").onclick = () => generateFiches();
     $("emptyGenBtn").onclick = () => generateFiches();
+    $("exportCsvBtn").onclick = () => downloadExport("csv");
+    $("exportAnkiBtn").onclick = () => downloadExport("anki");
     $("quizStartBtn").onclick = () => beginQuizFlow();
     $("quizCancelBtn").onclick = () => {
       showQuizLaunch();

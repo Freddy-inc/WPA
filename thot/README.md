@@ -110,8 +110,11 @@ Reference UX: Apple **Aperçu / Preview** (iPhone / macOS) — rendered pages, s
 | `POST` | `/api/generate` | `{ "kind":"fiches"\|"quiz" }` | One generation path (full corpus) |
 | `GET` | `/api/fiches` | — | List fiches (+ count) |
 | `POST` | `/api/fiches` | `{ "front","back","origin?" }` | Append one fiche (Sens capture; no wipe) |
+| `GET` | `/api/fiches/recent` | — | Newest fiches (Derniers capturés) |
+| `GET` | `/api/fiches/export?format=csv\|anki` | — | Download CSV or Anki-import TSV |
 | `GET` | `/api/fiches/{id}` | — | One fiche |
 | `PUT` | `/api/fiches/{id}` | `{ "front","back" }` | Edit recto/verso (marks edited) |
+| `GET` | `/api/vocab-status` | — | Term → `review`\|`known` for PDF highlight |
 | `GET` | `/api/quiz` | — | Stored quiz |
 | `POST` | `/api/quiz/attempt` | `{ "score","total" }` | Record quiz attempt |
 | `POST` | `/api/quiz/remediate` | `{ "misses":[{question,notion,correct_answer,chosen_answer}] }` | Append remédiation fiches for misses (LLM + course context) |
@@ -142,6 +145,7 @@ Reference UX: Apple **Aperçu / Preview** (iPhone / macOS) — rendered pages, s
 - Fiches / quiz generation: LLM (Groq) with course excerpt + effective L1/L2 (global or course override)
 - Fiche edits persist and feed progression count
 - **Podcast**: two-voice overview from course PDF (Groq script) + **edge-tts** MP3 (free) or Web Speech fallback; listed per course; **no mic retention**
+- **P1 vocab UX**: word status in PDF (à revoir / connu), « Derniers capturés » strip, Export CSV + Anki TSV
 
 ## Still out of slice
 
