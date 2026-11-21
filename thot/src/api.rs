@@ -55,7 +55,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/course/pdf", get(course_pdf))
         .route("/api/glossary", post(define_glossary))
         .route("/api/generate", post(generate_content))
-        .route("/api/fiches", get(list_fiches))
+        .route("/api/fiches", get(list_fiches).post(create_fiche))
         .route("/api/fiches/{id}", get(get_fiche).put(update_fiche))
         .route("/api/quiz", get(get_quiz))
         .route("/api/quiz/attempt", post(quiz_attempt))
@@ -662,6 +662,46 @@ async fn list_fiches(
     Ok(Json(json!({
         "fiches": fiches,
         "count": fiches.len(),
+    })))
+}
+
+#[derive(Deserialize)]
+struct FicheCreate {
+    front: String,
+    back: String,
+    /// Optional origin label for UI (e.g. "sens", "lecture").
+    #[serde(default)]
+    origin: Option<String>,
+}
+
+/// Append one fiche from the reader Sens menu (does not wipe existing cards).
+async fn create_fiche(
+    State(st): State<Arc<AppState>>,
+    Json(body): Json<FicheCreate>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let mut front = body.front.trim().to_string();
+    let back = body.back.trim().to_string();
+    if front.is_empty() || back.is_empty() {
+        return Err(ApiError::bad("recto et verso requis"));
+    }
+    let origin = body.origin.as_deref().unwrap_or("sens");
+    if origin.eq_ignore_ascii_case("sens") && !front.starts_with("[Sens]") {
+        front = format!("[Sens] {front}");
+    }
+    let rows = st
+        .db
+        .append_fiches(&[(front, back)])
+        .await
+        .map_err(|e| ApiError::bad(e.to_string()))?;
+    let fiche = rows
+        .into_iter()
+        .next()
+        .ok_or_else(|| ApiError::bad("fiche non créée"))?;
+    let snap = st.db.progression_snapshot().await.map_err(ApiError::from)?;
+    Ok(Json(json!({
+        "ok": true,
+        "fiche": fiche,
+        "progression": snap,
     })))
 }
 

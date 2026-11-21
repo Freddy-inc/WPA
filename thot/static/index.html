@@ -493,7 +493,10 @@
     }
     #selMenu .sel-actions .primary { background: #2bb673; }
     #selMenu .sel-actions .muted { background: #3a4150; }
+    #selMenu .sel-actions .save { background: #3d6ea8; }
+    #selMenu .sel-actions .save:disabled { opacity: 0.45; }
     #selMenu .badge { margin-top: 0.2rem; }
+    #selMenu .save-msg { font-size: 0.78rem; margin-top: 0.35rem; color: #9fd6b8; }
   </style>
 </head>
 <body>
@@ -719,9 +722,11 @@
     <div class="sel-body" id="selBody">Sélectionnez « Sens » pour la définition L1.</div>
     <div class="sel-actions">
       <button type="button" class="primary" id="selSense">Sens</button>
+      <button type="button" class="save" id="selSaveFiche" disabled title="Capturer dans Mes fiches">+ Fiche</button>
       <button type="button" class="muted" id="selCopy">Copier</button>
       <button type="button" class="muted" id="selClose">Fermer</button>
     </div>
+    <div class="save-msg" id="selSaveMsg" hidden></div>
   </div>
 
   <script src="/vendor/pdfjs/pdf.min.js"></script>
@@ -736,6 +741,7 @@
     let hubOpen = false;
     let coursesCache = [];
     let lastSelection = "";
+    let lastGlossary = null;
     let menuPinned = false;
     let quizQuestions = [];
     let quizIndex = 0;
@@ -1190,11 +1196,19 @@
     function hideMenu() {
       $("selMenu").classList.remove("open");
       menuPinned = false;
+      lastGlossary = null;
+      $("selSaveFiche").disabled = true;
+      $("selSaveMsg").hidden = true;
+      $("selSaveMsg").textContent = "";
       $("selBody").textContent = "Sélectionnez « Sens » pour la définition L1.";
     }
 
     function showMenuNearSelection(term) {
       lastSelection = term;
+      lastGlossary = null;
+      $("selSaveFiche").disabled = true;
+      $("selSaveMsg").hidden = true;
+      $("selSaveMsg").textContent = "";
       $("selTerm").textContent = `L2 · ${term}`;
       $("selBody").textContent = "Sélectionnez « Sens » pour la définition L1.";
       const menu = $("selMenu");
@@ -1255,6 +1269,9 @@
       }
     };
     function renderGlossaryResult(g) {
+      lastGlossary = g;
+      $("selSaveFiche").disabled = !(g && (g.meaning_l1 || g.phrase_sense_l1));
+      $("selSaveMsg").hidden = true;
       const verified = !!g.verified;
       const badgeClass = verified ? "ok" : "warn";
       const badgeText = g.badge
@@ -1283,17 +1300,49 @@
           <div class="phrase-sense">${escapeHtml(phraseSense)}</div>
           ${wordsHtml}
           <span class="badge ${badgeClass}">${escapeHtml(badgeText)}</span>
-          <div class="meta" style="color:#b8c0d0">${g.cached ? "cache" : "nouveau"}</div>
+          <div class="meta" style="color:#b8c0d0">${g.cached ? "cache" : "nouveau"} · + Fiche garde le contexte</div>
         `;
       } else {
         $("selBody").innerHTML = `
           <div>${escapeHtml(g.meaning_l1 || "Sens non disponible")}</div>
           <span class="badge ${badgeClass}">${escapeHtml(badgeText)}</span>
           ${sourcesBlock}
-          <div class="meta" style="color:#b8c0d0">${g.cached ? "cache" : "nouveau"} · ${verified ? "croisement OK" : "non vérifié"}</div>
+          <div class="meta" style="color:#b8c0d0">${g.cached ? "cache" : "nouveau"} · ${verified ? "croisement OK" : "non vérifié"} · + Fiche pour retenir</div>
         `;
       }
     }
+
+    $("selSaveFiche").onclick = async () => {
+      const g = lastGlossary;
+      if (!g) return;
+      const front = (g.term_l2 || lastSelection || "").trim();
+      const sense = (g.phrase_sense_l1 || g.meaning_l1 || "").trim();
+      if (!front || !sense) return;
+      const ctx = (g.context_snippet || "").trim();
+      const back = ctx
+        ? `${sense}\n\n— Contexte cours —\n${ctx.slice(0, 420)}${ctx.length > 420 ? "…" : ""}`
+        : sense;
+      $("selSaveFiche").disabled = true;
+      try {
+        const res = await api("/api/fiches", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ front, back, origin: "sens" }),
+        });
+        if (res.fiche) {
+          fichesCache = [...fichesCache, res.fiche];
+          renderFichesList();
+        }
+        if (res.progression) renderProgression(res.progression);
+        $("selSaveMsg").hidden = false;
+        $("selSaveMsg").textContent = "Ajouté à Mes fiches (avec contexte).";
+      } catch (e) {
+        $("selSaveMsg").hidden = false;
+        $("selSaveMsg").style.color = "#f5b4b0";
+        $("selSaveMsg").textContent = e.message || "Échec enregistrement";
+        $("selSaveFiche").disabled = false;
+      }
+    };
 
     $("selSense").onclick = async () => {
       const term = (lastSelection || "").trim();
@@ -1344,12 +1393,24 @@
       }
       empty.hidden = true;
       list.innerHTML = fichesCache.map((f) => {
-        const isRemed = String(f.front || "").startsWith("[Remédiation]");
-        const title = isRemed
-          ? String(f.front).replace(/^\[Remédiation\]\s*/, "")
-          : f.front;
-        const mark = isRemed ? "remédiation quiz" : f.edited ? "modifiée" : "auto";
-        const badge = isRemed ? `<span class="remed-badge">Remédiation</span>` : "";
+        const raw = String(f.front || "");
+        const isRemed = raw.startsWith("[Remédiation]");
+        const isSens = raw.startsWith("[Sens]");
+        const title = raw
+          .replace(/^\[Remédiation\]\s*/, "")
+          .replace(/^\[Sens\]\s*/, "");
+        const mark = isRemed
+          ? "remédiation quiz"
+          : isSens
+            ? "capturé en lecture"
+            : f.edited
+              ? "modifiée"
+              : "auto";
+        const badge = isRemed
+          ? `<span class="remed-badge">Remédiation</span>`
+          : isSens
+            ? `<span class="remed-badge" style="background:#dce8f5;color:#2a5080">Sens</span>`
+            : "";
         return `<button type="button" class="fiche-row" data-id="${f.id}">
           <span class="preview">
             <strong>${escapeHtml(title)}${badge}</strong>
@@ -1725,8 +1786,18 @@
                 <div class="tag">Nouvelle fiche</div>
                 <strong>${escapeHtml(title)}</strong>
                 <div class="meta">${escapeHtml((f.back || "").slice(0, 220))}${(f.back || "").length > 220 ? "…" : ""}</div>
+                <div class="actions" style="margin-top:0.4rem">
+                  <button type="button" class="secondary remed-open" data-id="${f.id}">Revoir fiche</button>
+                </div>
               </div>`;
             }).join("");
+            $("remediationFiches").querySelectorAll(".remed-open").forEach((btn) => {
+              btn.onclick = () => {
+                const id = Number(btn.dataset.id);
+                $("fichesSection").scrollIntoView({ behavior: "smooth", block: "start" });
+                openFicheEditor(id);
+              };
+            });
           } else {
             $("remediationStatus").textContent = "Aucune fiche générée.";
           }

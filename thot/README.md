@@ -109,6 +109,7 @@ Reference UX: Apple **Aperçu / Preview** (iPhone / macOS) — rendered pages, s
 | `POST` | `/api/glossary` | `{ "term" }` | Word: L2→L1 + web verify. Phrase (2+ words): `kind:"phrase"`, `phrase_sense_l1`, `words[]` + cache |
 | `POST` | `/api/generate` | `{ "kind":"fiches"\|"quiz" }` | One generation path (full corpus) |
 | `GET` | `/api/fiches` | — | List fiches (+ count) |
+| `POST` | `/api/fiches` | `{ "front","back","origin?" }` | Append one fiche (Sens capture; no wipe) |
 | `GET` | `/api/fiches/{id}` | — | One fiche |
 | `PUT` | `/api/fiches/{id}` | `{ "front","back" }` | Edit recto/verso (marks edited) |
 | `GET` | `/api/quiz` | — | Stored quiz |
@@ -130,6 +131,8 @@ Reference UX: Apple **Aperçu / Preview** (iPhone / macOS) — rendered pages, s
 - Phrase Sens: whole-selection L1 sense (course-aware) + word-level helps; respects effective L1/L2 (global or course override)
 - Error / empty UX (§10): empty courses, import non-extractible, sense unavailable, selection too wide, quiz blocked, Groq 429 (no silent fail)
 - **Mes fiches**: empty state + CTAs, list with aperçu recto, edit recto/verso + save, revise (flip)
+- **Capturer depuis Sens** (+ Fiche): saves L2 + L1 sense **with course context** into Mes fiches (oqou-style loop)
+- Quiz remédiation: **Revoir fiche** opens the new card from results
 - **Quiz**: launch screen, blocked if insufficient material, Q one-by-one + Quit, results + feedback, replay; last score on progression
 - **Remédiation**: after quiz misses, show wrong answers + generate targeted new fiches (appended, not wipe) via Groq + course PDF context
 - Fiches / quiz generation: LLM (Groq) with course excerpt + effective L1/L2 (global or course override)
