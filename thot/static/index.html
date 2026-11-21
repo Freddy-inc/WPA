@@ -2,7 +2,8 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+  <meta name="mobile-web-app-capable" content="yes" />
   <title>Thot — démo MVP</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -35,33 +36,91 @@
     }
 
     * { box-sizing: border-box; }
-    html { scroll-behavior: smooth; }
+    html { scroll-behavior: smooth; height: 100%; }
     body {
       margin: 0;
       font-family: var(--font-body);
       color: var(--ink);
-      min-height: 100vh;
+      min-height: 100%;
+      min-height: 100dvh;
+      display: flex;
+      justify-content: center;
+      align-items: stretch;
+      background: #121820;
+      -webkit-tap-highlight-color: transparent;
+      -webkit-font-smoothing: antialiased;
+    }
+    /* Portrait phone shell — primary layout, not landscape desktop */
+    .phone {
+      width: 100%;
+      max-width: 390px;
+      height: 100dvh;
+      max-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      overflow: hidden;
       background:
-        radial-gradient(ellipse 90% 60% at 10% -10%, #b8e0d8 0%, transparent 55%),
-        radial-gradient(ellipse 80% 50% at 100% 0%, #a8c8e8 0%, transparent 50%),
+        radial-gradient(ellipse 90% 55% at 8% -8%, #b8e0d8 0%, transparent 55%),
+        radial-gradient(ellipse 80% 45% at 100% 0%, #a8c8e8 0%, transparent 50%),
         radial-gradient(ellipse 70% 40% at 50% 100%, #d4e4f0 0%, transparent 45%),
         linear-gradient(165deg, var(--bg-mid) 0%, var(--bg-deep) 100%);
-      background-attachment: fixed;
     }
+    @media (min-width: 420px) {
+      body {
+        padding: 1.1rem 0;
+        align-items: center;
+        background:
+          radial-gradient(ellipse 60% 40% at 50% 0%, #2a3a48 0%, transparent 55%),
+          #121820;
+      }
+      .phone {
+        height: min(844px, calc(100dvh - 2.2rem));
+        max-height: min(844px, calc(100dvh - 2.2rem));
+        border-radius: 40px;
+        border: 3px solid #2c3542;
+        box-shadow:
+          0 0 0 1px rgba(255,255,255,0.06) inset,
+          0 28px 80px rgba(0,0,0,0.45);
+      }
+      .phone::before {
+        content: "";
+        position: absolute;
+        top: 8px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 108px;
+        height: 28px;
+        background: #0c1016;
+        border-radius: 999px;
+        z-index: 40;
+        pointer-events: none;
+      }
+    }
+    .app-scroll {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      overflow-x: hidden;
+      -webkit-overflow-scrolling: touch;
+      padding: 0 0 env(safe-area-inset-bottom, 0);
+    }
+    body.hub-open .app-scroll { padding-bottom: calc(4.85rem + env(safe-area-inset-bottom, 0px)); }
     .app-shell {
-      max-width: 560px;
-      margin: 0 auto;
-      padding: 0 1rem 4.5rem;
+      width: 100%;
+      max-width: none;
+      margin: 0;
+      padding: 0 1rem 1.25rem;
       position: relative;
       z-index: 1;
     }
     .brand-bar {
-      padding: 1.6rem 0.2rem 1rem;
+      padding: 1.35rem 0.15rem 0.85rem;
       animation: riseIn 0.55s ease both;
     }
     .brand-bar h1 {
       font-family: var(--font-display);
-      font-size: clamp(2.35rem, 7vw, 2.9rem);
+      font-size: 2.55rem;
       margin: 0;
       letter-spacing: -0.04em;
       font-weight: 700;
@@ -72,9 +131,9 @@
     }
     .brand-bar p {
       color: var(--muted);
-      margin: 0.4rem 0 0;
+      margin: 0.35rem 0 0;
       line-height: 1.4;
-      max-width: 28rem;
+      font-size: 0.95rem;
       font-weight: 450;
     }
     .view { display: none; }
@@ -86,6 +145,10 @@
       from { opacity: 0; transform: translateY(10px); }
       to { opacity: 1; transform: translateY(0); }
     }
+    @keyframes tabPop {
+      from { transform: scale(0.92); opacity: 0.6; }
+      to { transform: scale(1); opacity: 1; }
+    }
     .glass {
       background: var(--glass);
       backdrop-filter: blur(var(--blur)) saturate(1.35);
@@ -96,12 +159,12 @@
     .hub-top {
       display: flex;
       align-items: center;
-      gap: 0.65rem;
-      padding: 0.75rem 0.85rem;
-      margin: 0.65rem 0 0.5rem;
+      gap: 0.55rem;
+      padding: 0.65rem 0.75rem;
+      margin: 0.55rem 0 0.55rem;
       border-radius: var(--radius);
       position: sticky;
-      top: 0.45rem;
+      top: 0.35rem;
       z-index: 20;
       background: var(--glass-strong);
       backdrop-filter: blur(22px) saturate(1.4);
@@ -111,7 +174,7 @@
     }
     .hub-top h2 {
       font-family: var(--font-display);
-      font-size: 1.28rem;
+      font-size: 1.18rem;
       margin: 0;
       flex: 1;
       min-width: 0;
@@ -121,55 +184,88 @@
       letter-spacing: -0.02em;
     }
     .back-btn {
-      width: 2.35rem;
-      height: 2.35rem;
+      width: 2.75rem;
+      height: 2.75rem;
+      min-width: 44px;
+      min-height: 44px;
       padding: 0;
       border-radius: 999px;
       background: rgba(255,255,255,0.65);
       color: var(--ink);
       border: 1px solid var(--line-strong);
-      font-size: 1.25rem;
+      font-size: 1.35rem;
       line-height: 1;
       flex-shrink: 0;
       transition: transform 0.2s ease, background 0.2s ease;
     }
-    .back-btn:hover { background: #fff; transform: scale(1.04); }
-    .hub-tabs {
-      display: flex;
-      gap: 0.35rem;
-      overflow-x: auto;
-      padding: 0.35rem;
-      margin: 0 0 0.75rem;
-      border-radius: 999px;
-      background: rgba(255,255,255,0.38);
-      backdrop-filter: blur(16px) saturate(1.3);
-      -webkit-backdrop-filter: blur(16px) saturate(1.3);
-      border: 1px solid var(--line);
-      scrollbar-width: none;
-      position: sticky;
-      top: 4.15rem;
-      z-index: 19;
+    .back-btn:active { background: #fff; transform: scale(0.96); }
+    /* iOS-style bottom Liquid Glass tab bar */
+    .tab-bar {
+      display: none;
+      position: absolute;
+      left: 10px;
+      right: 10px;
+      bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+      z-index: 30;
+      gap: 0;
+      padding: 0.35rem 0.25rem calc(0.35rem + 2px);
+      border-radius: 22px;
+      background: rgba(255, 255, 255, 0.55);
+      backdrop-filter: blur(28px) saturate(1.55);
+      -webkit-backdrop-filter: blur(28px) saturate(1.55);
+      border: 1px solid rgba(255,255,255,0.55);
+      box-shadow: 0 10px 32px rgba(20, 40, 60, 0.16);
     }
-    .hub-tabs::-webkit-scrollbar { display: none; }
+    body.hub-open .tab-bar { display: flex; }
     .hub-tab {
-      flex: 0 0 auto;
-      padding: 0.45rem 0.85rem;
-      border-radius: 999px;
+      flex: 1 1 0;
+      min-width: 0;
+      min-height: 48px;
+      padding: 0.28rem 0.15rem 0.2rem;
+      border-radius: 16px;
       border: none;
       background: transparent;
       color: var(--muted);
       font: inherit;
       font-weight: 560;
-      font-size: 0.86rem;
+      font-size: 0.62rem;
+      letter-spacing: 0.01em;
       cursor: pointer;
-      transition: background 0.25s ease, color 0.25s ease, transform 0.2s ease;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0.12rem;
+      transition: color 0.2s ease, background 0.2s ease, transform 0.2s ease;
     }
-    .hub-tab:hover { color: var(--ink); background: rgba(255,255,255,0.45); }
+    .hub-tab .tab-ico {
+      font-size: 1.15rem;
+      line-height: 1;
+      opacity: 0.85;
+    }
+    .hub-tab:active { transform: scale(0.94); }
     .hub-tab.active {
       background: rgba(255,255,255,0.88);
       color: var(--accent);
       box-shadow: 0 2px 10px rgba(13, 122, 104, 0.12);
-      transform: scale(1.02);
+      animation: tabPop 0.28s ease both;
+    }
+    .hub-tab.active .tab-ico { opacity: 1; }
+    .hub-panel { display: none; }
+    .hub-panel.active {
+      display: block;
+      animation: riseIn 0.32s ease both;
+    }
+    .hub-block {
+      padding: 0.85rem 0 1rem;
+      border-top: 1px solid var(--line-strong);
+    }
+    .hub-block:first-child { border-top: none; padding-top: 0; }
+    .hub-block h2 {
+      font-family: var(--font-display);
+      font-size: 1.12rem;
+      margin: 0 0 0.55rem;
+      letter-spacing: -0.02em;
     }
     .search-wrap {
       position: relative;
@@ -271,18 +367,21 @@
     }
     .hub-stack {
       display: grid;
-      gap: 0.85rem;
-      margin-top: 0.35rem;
+      gap: 0.75rem;
+      margin-top: 0.15rem;
     }
-    section {
+    section,
+    .hub-panel {
       background: var(--glass);
       backdrop-filter: blur(var(--blur)) saturate(1.3);
       -webkit-backdrop-filter: blur(var(--blur)) saturate(1.3);
       border: 1px solid var(--line);
       box-shadow: var(--shadow-soft);
       border-radius: var(--radius);
-      padding: 1.1rem 1.15rem 1.25rem;
-      scroll-margin-top: 7.5rem;
+      padding: 1rem 1rem 1.15rem;
+    }
+    .hub-panel {
+      min-height: 12rem;
     }
     section h2 {
       font-family: var(--font-display);
@@ -300,20 +399,21 @@
       font: inherit;
       color: var(--ink);
     }
-    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
-    @media (max-width: 720px) { .row { grid-template-columns: 1fr; } }
+    .row { display: grid; grid-template-columns: 1fr; gap: 0.65rem; }
     .actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
     button {
       font: inherit;
       font-weight: 600;
       border: none;
       cursor: pointer;
-      padding: 0.55rem 0.95rem;
+      min-height: 44px;
+      padding: 0.7rem 1.05rem;
       background: var(--accent);
       color: #fff;
       border-radius: 999px;
       transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
     }
+    button:active { transform: scale(0.97); }
     button:hover { box-shadow: 0 4px 14px rgba(13, 122, 104, 0.28); }
     button.secondary {
       background: rgba(255,255,255,0.55);
@@ -468,43 +568,48 @@
     .sources a { color: var(--accent); }
 
     /* ---- PDF viewer (Aperçu + liquid glass chrome) ---- */
-    #readerSection { display: none; padding: 0; overflow: hidden; }
-    #readerSection.visible { display: block; }
+    #readerSection.hub-panel {
+      padding: 0;
+      overflow: hidden;
+    }
     .viewer-chrome {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 0.75rem;
-      padding: 0.6rem 0.9rem;
+      gap: 0.5rem;
+      padding: 0.55rem 0.7rem;
       background: var(--glass-dark);
       backdrop-filter: blur(20px) saturate(1.4);
       -webkit-backdrop-filter: blur(20px) saturate(1.4);
       color: #f2f4f7;
-      flex-wrap: wrap;
       border-bottom: 1px solid rgba(255,255,255,0.12);
     }
     .viewer-chrome .title {
       font-weight: 600;
-      font-size: 0.92rem;
+      font-size: 0.86rem;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      max-width: 40%;
+      flex: 1;
+      min-width: 0;
     }
     .viewer-chrome .pager {
       display: flex;
       align-items: center;
-      gap: 0.4rem;
-      font-size: 0.88rem;
+      gap: 0.3rem;
+      font-size: 0.82rem;
+      flex-shrink: 0;
     }
     .viewer-chrome button {
-      padding: 0.35rem 0.7rem;
+      min-height: 40px;
+      min-width: 40px;
+      padding: 0.35rem 0.65rem;
       background: rgba(255,255,255,0.14);
       color: #fff;
       border: 1px solid rgba(255,255,255,0.18);
       border-radius: 999px;
     }
-    .viewer-chrome button:hover { background: rgba(255,255,255,0.24); }
+    .viewer-chrome button:active { background: rgba(255,255,255,0.28); }
     .viewer-hint {
       padding: 0.5rem 0.9rem;
       font-size: 0.82rem;
@@ -514,10 +619,10 @@
       border-bottom: 1px solid var(--line);
     }
     #pdfScroll {
-      max-height: min(72vh, 820px);
+      max-height: min(52dvh, 480px);
       overflow: auto;
       background: linear-gradient(180deg, #4a5560 0%, #3a424a 100%);
-      padding: 1rem 0 1.5rem;
+      padding: 0.75rem 0 1.1rem;
     }
     .pdf-page {
       position: relative;
@@ -718,6 +823,8 @@
   </style>
 </head>
 <body>
+  <div class="phone" id="phoneShell">
+  <div class="app-scroll" id="appScroll">
   <div class="app-shell">
     <div class="brand-bar" id="homeBrand">
       <h1>Thot</h1>
@@ -772,50 +879,9 @@
         <h2 id="hubTitle">Cours</h2>
       </div>
       <p class="meta" id="hubSubtitle" style="margin:0 0 0.45rem 0.35rem"></p>
-      <nav class="hub-tabs" id="hubTabs" aria-label="Sections du cours">
-        <button type="button" class="hub-tab active" data-target="import">Docs</button>
-        <button type="button" class="hub-tab" data-target="readerSection">Lecture</button>
-        <button type="button" class="hub-tab" data-target="fichesSection">Fiches</button>
-        <button type="button" class="hub-tab" data-target="generate">Quiz</button>
-        <button type="button" class="hub-tab" data-target="podcastSection">Podcast</button>
-        <button type="button" class="hub-tab" data-target="progression">Suite</button>
-      </nav>
 
       <div class="hub-stack">
-    <section id="langs">
-      <h2>Langues du cours</h2>
-      <p class="meta" id="courseLangDefault">Défaut app : —</p>
-      <label style="display:flex;align-items:center;gap:0.45rem;margin:0.55rem 0;color:var(--ink)">
-        <input type="checkbox" id="courseLangOverride" />
-        Surcharger L1/L2 pour ce cours
-      </label>
-      <div class="row" id="courseLangRow">
-        <div>
-          <label for="courseL1">L1</label>
-          <select id="courseL1" disabled>
-            <option value="fr" selected>Français</option>
-            <option value="en">English</option>
-            <option value="es">Español</option>
-            <option value="de">Deutsch</option>
-          </select>
-        </div>
-        <div>
-          <label for="courseL2">L2</label>
-          <select id="courseL2" disabled>
-            <option value="en" selected>English</option>
-            <option value="fr">Français</option>
-            <option value="es">Español</option>
-            <option value="de">Deutsch</option>
-          </select>
-        </div>
-      </div>
-      <div class="actions">
-        <button type="button" id="saveCourseLangs">Enregistrer</button>
-      </div>
-      <div id="langMsg"></div>
-    </section>
-
-    <section id="import">
+    <section id="import" class="hub-panel active">
       <h2>Documents</h2>
       <p class="meta">Plusieurs PDFs dans ce cours. Glossaire, fiches et quiz agrègent les textes de ce cours uniquement.</p>
       <label for="pdf">Ajouter un PDF (texte extractible)</label>
@@ -827,7 +893,7 @@
       <div id="docsList" class="fiche-list" style="margin-top:0.75rem"></div>
     </section>
 
-    <section id="readerSection">
+    <section id="readerSection" class="hub-panel">
       <div class="viewer-chrome">
         <div class="title" id="pdfTitle">Cours</div>
         <div class="pager">
@@ -855,7 +921,7 @@
       </div>
     </section>
 
-    <section id="fichesSection">
+    <section id="fichesSection" class="hub-panel">
       <h2>Mes fiches</h2>
       <p class="meta" id="fichesCountLabel">Aucune fiche pour l’instant.</p>
       <div class="actions">
@@ -911,23 +977,7 @@
       </div>
     </section>
 
-    <section id="podcastSection">
-      <h2>Podcast</h2>
-      <p class="meta">Aperçu audio à deux voix du corpus PDF (style NotebookLM). Script via Groq · voix gratuites (edge-tts) ou Web Speech. Aucun micro n’est enregistré.</p>
-      <div class="actions">
-        <button type="button" id="podcastGenBtn">Générer un aperçu</button>
-        <button type="button" class="ghost" id="podcastStopBtn" hidden>Stop</button>
-      </div>
-      <div id="podcastMsg"></div>
-      <div id="podcastPlayer" class="fiche-panel" hidden style="margin-top:0.75rem">
-        <p class="meta" id="podcastNowTitle"></p>
-        <audio id="podcastAudio" controls style="width:100%;margin:0.4rem 0"></audio>
-        <div id="podcastScriptPreview" class="meta" style="max-height:9rem;overflow:auto;white-space:pre-wrap"></div>
-      </div>
-      <div id="podcastList" class="fiche-list" style="margin-top:0.75rem"></div>
-    </section>
-
-    <section id="generate">
+    <section id="generate" class="hub-panel">
       <h2>Quiz</h2>
       <div id="quizLaunch">
         <p>Questions tirées du corpus de tous les PDFs du cours.</p>
@@ -950,35 +1000,96 @@
       <div id="quizOut"></div>
     </section>
 
-    <section id="progression">
-      <h2>Progression</h2>
-      <div class="prog-block">
-        <h3>Lecture</h3>
-        <div class="value" id="progPages">Pages ouvertes : 0 / 0</div>
-        <p class="meta">Par document + total cours. Chaque page vue compte une fois.</p>
-        <div id="progByDoc" class="meta" style="margin-top:0.45rem"></div>
-      </div>
-      <div class="prog-block">
-        <h3>Fiches</h3>
-        <div class="value" id="progFiches">0 disponibles</div>
-      </div>
-      <div class="prog-block">
-        <h3>Quiz</h3>
-        <div class="value" id="progQuiz">Aucune tentative</div>
-      </div>
-      <div class="prog-block">
-        <h3>Ensuite ?</h3>
-        <div class="actions" style="margin-top:0.35rem">
-          <button type="button" id="ctaReread">Relire le PDF</button>
-          <button type="button" class="secondary" id="ctaFiches">Réviser les fiches</button>
-          <button type="button" class="secondary" id="ctaQuiz">Rejouer le quiz</button>
+    <section id="suitePanel" class="hub-panel">
+      <div class="hub-block" id="langs">
+        <h2>Langues du cours</h2>
+        <p class="meta" id="courseLangDefault">Défaut app : —</p>
+        <label style="display:flex;align-items:center;gap:0.45rem;margin:0.55rem 0;color:var(--ink)">
+          <input type="checkbox" id="courseLangOverride" />
+          Surcharger L1/L2 pour ce cours
+        </label>
+        <div class="row" id="courseLangRow">
+          <div>
+            <label for="courseL1">L1</label>
+            <select id="courseL1" disabled>
+              <option value="fr" selected>Français</option>
+              <option value="en">English</option>
+              <option value="es">Español</option>
+              <option value="de">Deutsch</option>
+            </select>
+          </div>
+          <div>
+            <label for="courseL2">L2</label>
+            <select id="courseL2" disabled>
+              <option value="en" selected>English</option>
+              <option value="fr">Français</option>
+              <option value="es">Español</option>
+              <option value="de">Deutsch</option>
+            </select>
+          </div>
         </div>
+        <div class="actions">
+          <button type="button" id="saveCourseLangs">Enregistrer</button>
+        </div>
+        <div id="langMsg"></div>
       </div>
-      <div id="progMsg" class="meta"></div>
+
+      <div class="hub-block" id="podcastSection">
+        <h2>Podcast</h2>
+        <p class="meta">Aperçu audio à deux voix du corpus PDF. Script via Groq · edge-tts ou Web Speech. Aucun micro.</p>
+        <div class="actions">
+          <button type="button" id="podcastGenBtn">Générer un aperçu</button>
+          <button type="button" class="ghost" id="podcastStopBtn" hidden>Stop</button>
+        </div>
+        <div id="podcastMsg"></div>
+        <div id="podcastPlayer" class="fiche-panel" hidden style="margin-top:0.75rem">
+          <p class="meta" id="podcastNowTitle"></p>
+          <audio id="podcastAudio" controls style="width:100%;margin:0.4rem 0"></audio>
+          <div id="podcastScriptPreview" class="meta" style="max-height:9rem;overflow:auto;white-space:pre-wrap"></div>
+        </div>
+        <div id="podcastList" class="fiche-list" style="margin-top:0.75rem"></div>
+      </div>
+
+      <div class="hub-block" id="progression">
+        <h2>Progression</h2>
+        <div class="prog-block">
+          <h3>Lecture</h3>
+          <div class="value" id="progPages">Pages ouvertes : 0 / 0</div>
+          <p class="meta">Par document + total cours. Chaque page vue compte une fois.</p>
+          <div id="progByDoc" class="meta" style="margin-top:0.45rem"></div>
+        </div>
+        <div class="prog-block">
+          <h3>Fiches</h3>
+          <div class="value" id="progFiches">0 disponibles</div>
+        </div>
+        <div class="prog-block">
+          <h3>Quiz</h3>
+          <div class="value" id="progQuiz">Aucune tentative</div>
+        </div>
+        <div class="prog-block">
+          <h3>Ensuite ?</h3>
+          <div class="actions" style="margin-top:0.35rem">
+            <button type="button" id="ctaReread">Relire le PDF</button>
+            <button type="button" class="secondary" id="ctaFiches">Réviser les fiches</button>
+            <button type="button" class="secondary" id="ctaQuiz">Rejouer le quiz</button>
+          </div>
+        </div>
+        <div id="progMsg" class="meta"></div>
+      </div>
     </section>
       </div><!-- .hub-stack -->
     </div><!-- #viewHub -->
   </div><!-- .app-shell -->
+  </div><!-- .app-scroll -->
+
+  <nav class="tab-bar" id="hubTabs" aria-label="Navigation du cours">
+    <button type="button" class="hub-tab active" data-target="import"><span class="tab-ico" aria-hidden="true">▣</span>Docs</button>
+    <button type="button" class="hub-tab" data-target="readerSection"><span class="tab-ico" aria-hidden="true">☰</span>Lecture</button>
+    <button type="button" class="hub-tab" data-target="fichesSection"><span class="tab-ico" aria-hidden="true">◇</span>Fiches</button>
+    <button type="button" class="hub-tab" data-target="generate"><span class="tab-ico" aria-hidden="true">✓</span>Quiz</button>
+    <button type="button" class="hub-tab" data-target="suitePanel"><span class="tab-ico" aria-hidden="true">···</span>Suite</button>
+  </nav>
+  </div><!-- .phone -->
 
   <div id="selMenu" role="dialog" aria-label="Menu sélection">
     <div class="sel-term" id="selTerm"></div>
@@ -1062,14 +1173,17 @@
 
     function showHome() {
       hubOpen = false;
+      document.body.classList.remove("hub-open");
       $("viewHome").classList.add("active");
       $("viewHub").classList.remove("active");
       $("homeBrand").style.display = "";
       hideMenu();
+      $("appScroll")?.scrollTo({ top: 0 });
     }
 
     function showHub(course) {
       hubOpen = true;
+      document.body.classList.add("hub-open");
       $("viewHome").classList.remove("active");
       $("viewHub").classList.add("active");
       $("homeBrand").style.display = "none";
@@ -1081,21 +1195,26 @@
     }
 
     function setHubTab(targetId) {
+      const panels = ["import", "readerSection", "fichesSection", "generate", "suitePanel"];
+      const resolved = panels.includes(targetId)
+        ? targetId
+        : targetId === "podcastSection" || targetId === "progression" || targetId === "langs"
+          ? "suitePanel"
+          : "import";
       document.querySelectorAll(".hub-tab").forEach((t) => {
-        t.classList.toggle("active", t.dataset.target === targetId);
+        t.classList.toggle("active", t.dataset.target === resolved);
       });
+      document.querySelectorAll(".hub-panel").forEach((p) => {
+        const on = p.id === resolved;
+        p.classList.toggle("active", on);
+        if (p.id === "readerSection") p.classList.toggle("visible", on);
+      });
+      $("appScroll")?.scrollTo({ top: 0, behavior: "smooth" });
     }
 
     $("hubTabs")?.querySelectorAll(".hub-tab").forEach((tab) => {
       tab.addEventListener("click", () => {
-        const id = tab.dataset.target;
-        setHubTab(id);
-        const el = $(id);
-        if (!el) return;
-        if (id === "readerSection") {
-          el.classList.add("visible");
-        }
-        el.scrollIntoView({ behavior: "smooth", block: "start" });
+        setHubTab(tab.dataset.target);
       });
     });
 
@@ -1393,10 +1512,9 @@
       const loading = pdfjsLib.getDocument({ url, withCredentials: false });
       pdfDoc = await loading.promise;
       currentPage = 1;
-      $("readerSection").classList.add("visible");
       await renderPage(currentPage);
       updatePager();
-      $("readerSection").scrollIntoView({ behavior: "smooth", block: "start" });
+      setHubTab("readerSection");
     }
 
     function updatePager() {
@@ -1608,7 +1726,7 @@
       }).join("");
       row.querySelectorAll(".capture-chip[data-id]").forEach((btn) => {
         btn.onclick = () => {
-          $("fichesSection").scrollIntoView({ behavior: "smooth", block: "start" });
+          setHubTab("fichesSection");
           openFicheEditor(Number(btn.dataset.id));
         };
       });
@@ -2000,10 +2118,10 @@
     $("reviseBtn").onclick = openRevise;
 
     function scrollToPdf() {
-      if ($("readerSection").classList.contains("visible")) {
-        $("readerSection").scrollIntoView({ behavior: "smooth", block: "start" });
-      } else {
-        $("import").scrollIntoView({ behavior: "smooth", block: "start" });
+      if (pdfDoc) setHubTab("readerSection");
+      else {
+        setHubTab("import");
+        setMsg($("importMsg"), "Importez un PDF pour ouvrir le lecteur.", false);
       }
     }
     $("fichesToPdf").onclick = scrollToPdf;
@@ -2281,7 +2399,7 @@
             $("remediationFiches").querySelectorAll(".remed-open").forEach((btn) => {
               btn.onclick = () => {
                 const id = Number(btn.dataset.id);
-                $("fichesSection").scrollIntoView({ behavior: "smooth", block: "start" });
+                setHubTab("fichesSection");
                 openFicheEditor(id);
               };
             });
@@ -2318,12 +2436,8 @@
           }
         };
       }
-      $("quizToFiches").onclick = () => {
-        $("fichesSection").scrollIntoView({ behavior: "smooth", block: "start" });
-      };
-      $("quizToProg").onclick = () => {
-        $("progression").scrollIntoView({ behavior: "smooth", block: "start" });
-      };
+      $("quizToFiches").onclick = () => setHubTab("fichesSection");
+      $("quizToProg").onclick = () => setHubTab("suitePanel");
       $("quizToPdf").onclick = scrollToPdf;
     }
 
@@ -2501,30 +2615,27 @@
     $("quizStartBtn").onclick = () => beginQuizFlow();
     $("quizCancelBtn").onclick = () => {
       showQuizLaunch();
-      $("progression").scrollIntoView({ behavior: "smooth", block: "nearest" });
+      setHubTab("suitePanel");
     };
     $("quizBlockedPdf").onclick = scrollToPdf;
-    $("quizBlockedFiches").onclick = () => {
-      $("fichesSection").scrollIntoView({ behavior: "smooth", block: "start" });
-    };
+    $("quizBlockedFiches").onclick = () => setHubTab("fichesSection");
 
     $("ctaReread").onclick = () => {
-      if ($("readerSection").classList.contains("visible")) {
-        $("readerSection").scrollIntoView({ behavior: "smooth", block: "start" });
-      } else {
-        $("import").scrollIntoView({ behavior: "smooth", block: "start" });
+      if (pdfDoc) setHubTab("readerSection");
+      else {
+        setHubTab("import");
         $("progMsg").textContent = "Importez un PDF pour lire.";
       }
     };
     $("ctaFiches").onclick = async () => {
-      $("fichesSection").scrollIntoView({ behavior: "smooth", block: "start" });
+      setHubTab("fichesSection");
       await loadFichesList();
       showFichesList();
       if (fichesCache.length) openRevise();
       else $("progMsg").textContent = "Aucune fiche — générez-en depuis le cours.";
     };
     $("ctaQuiz").onclick = async () => {
-      $("generate").scrollIntoView({ behavior: "smooth", block: "start" });
+      setHubTab("generate");
       showQuizLaunch();
       await refreshQuizLaunch();
     };
