@@ -5,6 +5,7 @@ mod db;
 mod generate;
 mod glossary;
 mod llm;
+mod notes;
 mod pdf;
 mod podcast;
 mod source;

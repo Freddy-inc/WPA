@@ -121,6 +121,10 @@ Reference UX: Apple **Aperçu / Preview** (iPhone / macOS) — rendered pages, s
 | `POST` | `/api/quiz/attempt` | `{ "score","total" }` | Record quiz attempt |
 | `POST` | `/api/quiz/remediate` | `{ "misses":[{question,notion,correct_answer,chosen_answer}] }` | Append remédiation fiches + `sources[]` (PDF page hits) |
 | `POST` | `/api/source/locate` | `{ "query", "notion"? }` or `{ "misses":[] }` | Best course PDF page for a notion / miss |
+| `GET` | `/api/notes` | — | List course notes (text drafts / cleaned) |
+| `POST` | `/api/notes` | `{ "title"? }` | Create empty note (no audio) |
+| `GET/PUT/DELETE` | `/api/notes/{id}` | PUT: `{ title, raw_text, cleaned_text? }` | Read / save draft / delete |
+| `POST` | `/api/notes/{id}/clean` | — | Groq cleanup: reformulate, keep course-relevant |
 | `GET` | `/api/podcasts` | — | List course podcast overviews |
 | `POST` | `/api/podcasts/generate` | — | Groq two-voice overview + edge-tts MP3 (or Web Speech fallback) |
 | `POST` | `/api/podcasts/generate-misses` | `{ "misses", "notions" }` | Remédiation podcast chapters tied to misses + PDF pages |

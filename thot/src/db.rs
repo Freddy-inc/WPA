@@ -188,13 +188,22 @@ impl Db {
                 updated_at TEXT NOT NULL,
                 PRIMARY KEY (course_id, term_l2)
             );
+            CREATE TABLE IF NOT EXISTS notes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                course_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                raw_text TEXT NOT NULL DEFAULT '',
+                cleaned_text TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
             "#,
         )
         .execute(&self.pool)
         .await?;
 
         sqlx::query(
-            "INSERT INTO schema_meta (key, value) VALUES ('version', '2')
+            "INSERT INTO schema_meta (key, value) VALUES ('version', '3')
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         )
         .execute(&self.pool)
@@ -856,6 +865,10 @@ impl Db {
             .bind(id)
             .execute(&self.pool)
             .await?;
+        sqlx::query("DELETE FROM notes WHERE course_id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
         let was_active = self
             .get_course_by_id(id)
             .await?
@@ -1493,6 +1506,103 @@ impl Db {
         .await?;
         Ok(row)
     }
+
+    /* ---------- live course notes (text only — never audio) ---------- */
+
+    pub async fn list_notes(&self) -> Result<Vec<NoteRow>> {
+        let course_id = self.active_course_id().await?;
+        let rows = sqlx::query_as::<_, NoteRow>(
+            "SELECT id, course_id, title, raw_text, cleaned_text, created_at, updated_at
+             FROM notes WHERE course_id = ? ORDER BY id DESC",
+        )
+        .bind(course_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    pub async fn get_note(&self, id: i64) -> Result<Option<NoteRow>> {
+        let course_id = self.active_course_id().await?;
+        let row = sqlx::query_as::<_, NoteRow>(
+            "SELECT id, course_id, title, raw_text, cleaned_text, created_at, updated_at
+             FROM notes WHERE id = ? AND course_id = ?",
+        )
+        .bind(id)
+        .bind(course_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    pub async fn create_note(&self, title: &str) -> Result<NoteRow> {
+        let course_id = self.active_course_id().await?;
+        let now = now_iso();
+        let title = {
+            let t = title.trim();
+            if t.is_empty() {
+                "Note de cours"
+            } else {
+                t
+            }
+        };
+        let res = sqlx::query(
+            "INSERT INTO notes (course_id, title, raw_text, cleaned_text, created_at, updated_at)
+             VALUES (?, ?, '', '', ?, ?)",
+        )
+        .bind(course_id)
+        .bind(title)
+        .bind(&now)
+        .bind(&now)
+        .execute(&self.pool)
+        .await?;
+        let id = res.last_insert_rowid();
+        self.get_note(id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("note missing after insert"))
+    }
+
+    pub async fn update_note(
+        &self,
+        id: i64,
+        title: Option<&str>,
+        raw_text: Option<&str>,
+        cleaned_text: Option<&str>,
+    ) -> Result<Option<NoteRow>> {
+        let course_id = self.active_course_id().await?;
+        let Some(existing) = self.get_note(id).await? else {
+            return Ok(None);
+        };
+        let title = title
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or(existing.title);
+        let raw_text = raw_text.unwrap_or(&existing.raw_text);
+        let cleaned_text = cleaned_text.unwrap_or(&existing.cleaned_text);
+        let now = now_iso();
+        sqlx::query(
+            "UPDATE notes SET title = ?, raw_text = ?, cleaned_text = ?, updated_at = ?
+             WHERE id = ? AND course_id = ?",
+        )
+        .bind(&title)
+        .bind(raw_text)
+        .bind(cleaned_text)
+        .bind(&now)
+        .bind(id)
+        .bind(course_id)
+        .execute(&self.pool)
+        .await?;
+        self.get_note(id).await
+    }
+
+    pub async fn delete_note(&self, id: i64) -> Result<bool> {
+        let course_id = self.active_course_id().await?;
+        let res = sqlx::query("DELETE FROM notes WHERE id = ? AND course_id = ?")
+            .bind(id)
+            .bind(course_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(res.rows_affected() > 0)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -1512,6 +1622,19 @@ pub struct PodcastRow {
     pub audio_relpath: Option<String>,
     pub playback_mode: String,
     pub created_at: String,
+}
+
+/// Course note: live Web Speech transcript (text) + optional AI-cleaned version.
+/// Privacy: raw_text / cleaned_text only — never audio bytes.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct NoteRow {
+    pub id: i64,
+    pub course_id: i64,
+    pub title: String,
+    pub raw_text: String,
+    pub cleaned_text: String,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -295,6 +295,35 @@
       outline: 2px solid rgba(13, 122, 104, 0.45);
       outline-offset: 2px;
     }
+    .notes-block {
+      margin-top: 1.15rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--line-strong);
+    }
+    .notes-block h2 {
+      font-family: var(--font-display);
+      font-size: 1.12rem;
+      margin: 0 0 0.45rem;
+      letter-spacing: -0.02em;
+    }
+    .notes-block textarea {
+      width: 100%;
+      min-height: 7rem;
+      padding: 0.65rem 0.75rem;
+      border: 1px solid var(--line-strong);
+      background: rgba(255,255,255,0.72);
+      border-radius: 12px;
+      font: inherit;
+      color: var(--ink);
+      resize: vertical;
+      line-height: 1.45;
+    }
+    .notes-block #noteMicStatus {
+      background: rgba(13, 122, 104, 0.16);
+      color: var(--accent);
+      border-color: rgba(13, 122, 104, 0.3);
+      animation: tabPop 0.9s ease infinite alternate;
+    }
     .search-wrap {
       position: relative;
       margin: 0.35rem 0 0.85rem;
@@ -919,6 +948,38 @@
       </div>
       <div id="importMsg"></div>
       <div id="docsList" class="fiche-list" style="margin-top:0.75rem"></div>
+
+      <div class="notes-block" id="notesBlock">
+        <h2>Notes de cours</h2>
+        <p class="meta">Dictée live via Web Speech (comme le micro du clavier) → <strong>texte seulement</strong>. Aucun fichier audio n’est envoyé ni conservé.</p>
+        <div class="actions">
+          <button type="button" id="noteCreateBtn">Nouvelle note</button>
+        </div>
+        <div id="notesList" class="fiche-list" style="margin-top:0.55rem"></div>
+        <div id="noteEditor" class="fiche-panel" hidden>
+          <div class="actions" style="margin-top:0">
+            <button type="button" class="ghost" id="noteBackBtn">← Notes</button>
+            <button type="button" id="noteSaveBtn">Sauver brouillon</button>
+          </div>
+          <label for="noteTitle">Titre</label>
+          <input type="text" id="noteTitle" placeholder="Ex. Cours du 22 nov." />
+          <label for="noteRaw">Transcript live</label>
+          <textarea id="noteRaw" rows="8" placeholder="Appuyez sur Démarrer le micro — le texte apparaît ici."></textarea>
+          <div class="actions">
+            <button type="button" class="secondary" id="noteMicStart">Démarrer le micro</button>
+            <button type="button" class="ghost" id="noteMicStop" hidden>Stop micro</button>
+            <span class="status-pill" id="noteMicStatus" hidden>Écoute…</span>
+          </div>
+          <p class="meta" id="notePrivacy">Confidentialité : transcript texte uniquement — pas d’upload audio.</p>
+          <div class="actions">
+            <button type="button" id="noteCleanBtn">Nettoyer avec l’IA</button>
+            <button type="button" class="ghost" id="noteDeleteBtn">Supprimer</button>
+          </div>
+          <div id="noteMsg"></div>
+          <label for="noteCleaned">Notes nettoyées</label>
+          <textarea id="noteCleaned" rows="8" placeholder="Après « Nettoyer avec l’IA » : reformulation structurée, hors digressions." readonly></textarea>
+        </div>
+      </div>
     </section>
 
     <section id="readerSection" class="hub-panel">
@@ -1159,6 +1220,11 @@
     let lastMissNotions = [];
     let lastMisses = [];
     let lastMissSources = [];
+    let notesCache = [];
+    let editingNoteId = null;
+    let noteRecognition = null;
+    let noteListening = false;
+    let noteBaseTranscript = "";
     const MIN_VOCAB_TOKEN_LEN = 4;
     const MAX_VOCAB_TERM_WORDS = 4;
     let editingFicheId = null;
@@ -1292,6 +1358,7 @@
         await loadFichesList();
         await refreshQuizLaunch();
         await loadPodcasts();
+        await loadNotes();
         await loadRecentCaptures();
         await refreshVocabStatus();
         const layer = document.querySelector("#pdfScroll .textLayer");
@@ -2836,6 +2903,222 @@
       speechSynthesis.onvoiceschanged = () => speechSynthesis.getVoices();
     }
 
+    /* ---------- Live course notes (Web Speech → text only) ---------- */
+    function speechRecognitionCtor() {
+      return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+    }
+
+    function stopNoteMic() {
+      noteListening = false;
+      try { noteRecognition?.stop(); } catch (_) {}
+      noteRecognition = null;
+      if ($("noteMicStart")) $("noteMicStart").hidden = false;
+      if ($("noteMicStop")) $("noteMicStop").hidden = true;
+      if ($("noteMicStatus")) $("noteMicStatus").hidden = true;
+    }
+
+    function startNoteMic() {
+      const Ctor = speechRecognitionCtor();
+      if (!Ctor) {
+        setMsg($("noteMsg"), "Web Speech indisponible dans ce navigateur — collez le texte à la main.", false);
+        return;
+      }
+      stopNoteMic();
+      noteBaseTranscript = ($("noteRaw").value || "").trim();
+      if (noteBaseTranscript && !noteBaseTranscript.endsWith("\n")) {
+        noteBaseTranscript += "\n";
+      }
+      const rec = new Ctor();
+      noteRecognition = rec;
+      const l1 = ($("courseL1")?.disabled === false && $("courseLangOverride")?.checked)
+        ? ($("courseL1").value || "fr")
+        : ($("globalL1")?.value || "fr");
+      rec.lang = ({ fr: "fr-FR", en: "en-US", es: "es-ES", de: "de-DE" })[l1] || "fr-FR";
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.onresult = (ev) => {
+        let interim = "";
+        let finalChunk = "";
+        for (let i = ev.resultIndex; i < ev.results.length; i++) {
+          const t = ev.results[i][0].transcript;
+          if (ev.results[i].isFinal) finalChunk += t;
+          else interim += t;
+        }
+        if (finalChunk) {
+          noteBaseTranscript += finalChunk.trim() + " ";
+        }
+        $("noteRaw").value = (noteBaseTranscript + interim).trimStart();
+      };
+      rec.onerror = (ev) => {
+        if (ev.error === "not-allowed") {
+          setMsg($("noteMsg"), "Micro refusé — autorisez le micro ou collez le texte.", false);
+        } else if (ev.error !== "aborted" && ev.error !== "no-speech") {
+          setMsg($("noteMsg"), `Micro : ${ev.error}`, false);
+        }
+        stopNoteMic();
+      };
+      rec.onend = () => {
+        if (noteListening) {
+          try { rec.start(); } catch (_) { stopNoteMic(); }
+        }
+      };
+      try {
+        rec.start();
+        noteListening = true;
+        $("noteMicStart").hidden = true;
+        $("noteMicStop").hidden = false;
+        $("noteMicStatus").hidden = false;
+        setMsg($("noteMsg"), "Écoute (texte live) — aucun audio n’est enregistré.", true);
+      } catch (e) {
+        setMsg($("noteMsg"), e.message || "Impossible de démarrer le micro", false);
+        stopNoteMic();
+      }
+    }
+
+    function renderNotesList() {
+      const el = $("notesList");
+      if (!el) return;
+      if (!notesCache.length) {
+        el.innerHTML = `<div class="empty-state"><p>Aucune note — créez-en une pour dicter le cours en live.</p></div>`;
+        return;
+      }
+      el.innerHTML = notesCache.map((n) => {
+        const preview = (n.raw_text || n.cleaned_text || "").trim().slice(0, 80);
+        const badge = (n.cleaned_text || "").trim()
+          ? `<span class="remed-badge" style="background:#dceee6;color:#1a6b4a">Nettoyée</span>`
+          : `<span class="remed-badge">Brouillon</span>`;
+        return `<button type="button" class="fiche-row note-open" data-id="${n.id}">
+          <span class="preview">
+            <strong>${escapeHtml(n.title || "Note")}${badge}</strong>
+            <span class="sub">${escapeHtml(preview || "Vide — démarrez le micro")}</span>
+          </span>
+          <span class="chev">›</span>
+        </button>`;
+      }).join("");
+      el.querySelectorAll(".note-open").forEach((btn) => {
+        btn.onclick = () => openNoteEditor(Number(btn.dataset.id));
+      });
+    }
+
+    async function loadNotes() {
+      try {
+        const data = await api("/api/notes");
+        notesCache = data.notes || [];
+        if ($("notePrivacy") && data.privacy) {
+          $("notePrivacy").textContent = data.privacy;
+        }
+        if (!$("noteEditor") || $("noteEditor").hidden) renderNotesList();
+      } catch (_) {
+        notesCache = [];
+        if ($("notesList")) $("notesList").innerHTML = "";
+      }
+    }
+
+    function showNotesList() {
+      stopNoteMic();
+      editingNoteId = null;
+      if ($("noteEditor")) $("noteEditor").hidden = true;
+      if ($("notesList")) $("notesList").hidden = false;
+      renderNotesList();
+    }
+
+    async function openNoteEditor(id) {
+      stopNoteMic();
+      try {
+        const data = await api(`/api/notes/${id}`);
+        const n = data.note;
+        editingNoteId = n.id;
+        $("noteTitle").value = n.title || "";
+        $("noteRaw").value = n.raw_text || "";
+        $("noteCleaned").value = n.cleaned_text || "";
+        $("noteCleaned").readOnly = true;
+        setMsg($("noteMsg"), "", true);
+        $("notesList").hidden = true;
+        $("noteEditor").hidden = false;
+      } catch (e) {
+        setMsg($("importMsg"), e.message, false);
+      }
+    }
+
+    async function createNote() {
+      try {
+        const data = await api("/api/notes", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: "Note de cours" }),
+        });
+        notesCache = [data.note, ...notesCache.filter((x) => x.id !== data.note.id)];
+        await openNoteEditor(data.note.id);
+      } catch (e) {
+        setMsg($("importMsg"), e.message, false);
+      }
+    }
+
+    async function saveNoteDraft() {
+      if (!editingNoteId) return;
+      $("noteSaveBtn").disabled = true;
+      try {
+        const res = await api(`/api/notes/${editingNoteId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: $("noteTitle").value,
+            raw_text: $("noteRaw").value,
+          }),
+        });
+        const n = res.note;
+        notesCache = notesCache.map((x) => (x.id === n.id ? n : x));
+        setMsg($("noteMsg"), "Brouillon sauvé (texte seulement).", true);
+      } catch (e) {
+        setMsg($("noteMsg"), e.message, false);
+      } finally {
+        $("noteSaveBtn").disabled = false;
+      }
+    }
+
+    async function cleanNoteAi() {
+      if (!editingNoteId) return;
+      await saveNoteDraft();
+      $("noteCleanBtn").disabled = true;
+      setMsg($("noteMsg"), "Nettoyage IA (Groq) — reformulation, hors digressions…", true);
+      try {
+        const res = await api(`/api/notes/${editingNoteId}/clean`, { method: "POST" });
+        const n = res.note;
+        $("noteTitle").value = n.title || $("noteTitle").value;
+        $("noteCleaned").value = n.cleaned_text || "";
+        notesCache = notesCache.map((x) => (x.id === n.id ? n : x));
+        setMsg($("noteMsg"), "Notes nettoyées — toujours sans audio stocké.", true);
+      } catch (e) {
+        setMsg($("noteMsg"), e.message, false);
+      } finally {
+        $("noteCleanBtn").disabled = false;
+      }
+    }
+
+    async function deleteNote() {
+      if (!editingNoteId) return;
+      if (!confirm("Supprimer cette note ?")) return;
+      stopNoteMic();
+      try {
+        await api(`/api/notes/${editingNoteId}`, { method: "DELETE" });
+        notesCache = notesCache.filter((x) => x.id !== editingNoteId);
+        showNotesList();
+      } catch (e) {
+        setMsg($("noteMsg"), e.message, false);
+      }
+    }
+
+    $("noteCreateBtn").onclick = () => createNote();
+    $("noteBackBtn").onclick = () => showNotesList();
+    $("noteSaveBtn").onclick = () => saveNoteDraft();
+    $("noteCleanBtn").onclick = () => cleanNoteAi();
+    $("noteDeleteBtn").onclick = () => deleteNote();
+    $("noteMicStart").onclick = () => startNoteMic();
+    $("noteMicStop").onclick = () => {
+      stopNoteMic();
+      setMsg($("noteMsg"), "Micro arrêté — sauvez le brouillon texte.", true);
+    };
+
     $("fichesBtn").onclick = () => generateFiches();
     $("emptyGenBtn").onclick = () => generateFiches();
     $("exportCsvBtn").onclick = () => downloadExport("csv");
@@ -2899,6 +3182,8 @@
     window.playPodcast = playPodcast;
     window.generateMissesPodcast = generateMissesPodcast;
     window.setHubTab = setHubTab;
+    window.openNoteEditor = openNoteEditor;
+    window.loadNotes = loadNotes;
 
     refreshStatus();
   </script>

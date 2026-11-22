@@ -16,6 +16,7 @@ use crate::db::Db;
 use crate::generate::{self, material_sufficient_for_quiz, GenerationResult, QuizMiss};
 use crate::glossary::{self, GlossaryResult};
 use crate::llm::LlmClient;
+use crate::notes;
 use crate::pdf;
 use crate::podcast;
 use crate::web_verify::WebVerifier;
@@ -73,6 +74,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/podcasts/{id}/audio", get(podcast_audio))
         .route("/api/pages/open", post(open_page))
         .route("/api/progression", get(progression))
+        .route("/api/notes", get(list_notes).post(create_note))
+        .route("/api/notes/{id}", get(get_note).put(update_note).delete(delete_note))
+        .route("/api/notes/{id}/clean", post(clean_note))
         .with_state(Arc::new(state))
 }
 
@@ -1353,6 +1357,118 @@ async fn podcast_audio(
         )
         .body(Body::from(bytes))
         .unwrap_or_else(|_| Response::new(Body::empty())))
+}
+
+/* ---------- live course notes (text only) ---------- */
+
+const NOTES_PRIVACY: &str =
+    "Texte uniquement — aucun fichier audio n’est envoyé ni conservé (Web Speech → transcript).";
+
+async fn list_notes(
+    State(st): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let notes = st.db.list_notes().await.map_err(ApiError::from)?;
+    Ok(Json(json!({
+        "notes": notes,
+        "count": notes.len(),
+        "privacy": NOTES_PRIVACY,
+    })))
+}
+
+#[derive(Deserialize)]
+struct CreateNoteBody {
+    #[serde(default)]
+    title: String,
+}
+
+async fn create_note(
+    State(st): State<Arc<AppState>>,
+    Json(body): Json<CreateNoteBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let note = st
+        .db
+        .create_note(&body.title)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(json!({
+        "ok": true,
+        "note": note,
+        "privacy": NOTES_PRIVACY,
+    })))
+}
+
+async fn get_note(
+    State(st): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let note = st
+        .db
+        .get_note(id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError::not_found("note introuvable"))?;
+    Ok(Json(json!({
+        "note": note,
+        "privacy": NOTES_PRIVACY,
+    })))
+}
+
+#[derive(Deserialize)]
+struct UpdateNoteBody {
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    raw_text: Option<String>,
+    #[serde(default)]
+    cleaned_text: Option<String>,
+}
+
+async fn update_note(
+    State(st): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    Json(body): Json<UpdateNoteBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let note = st
+        .db
+        .update_note(
+            id,
+            body.title.as_deref(),
+            body.raw_text.as_deref(),
+            body.cleaned_text.as_deref(),
+        )
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError::not_found("note introuvable"))?;
+    Ok(Json(json!({
+        "ok": true,
+        "note": note,
+        "privacy": NOTES_PRIVACY,
+    })))
+}
+
+async fn delete_note(
+    State(st): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let ok = st.db.delete_note(id).await.map_err(ApiError::from)?;
+    if !ok {
+        return Err(ApiError::not_found("note introuvable"));
+    }
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn clean_note(
+    State(st): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let note = notes::clean_note(&st.db, &st.llm, id)
+        .await
+        .map_err(map_llm_err)?;
+    Ok(Json(json!({
+        "ok": true,
+        "note": note,
+        "privacy": NOTES_PRIVACY,
+    })))
 }
 
 /* ---------- errors ---------- */

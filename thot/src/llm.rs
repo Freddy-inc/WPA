@@ -411,6 +411,19 @@ fn stub_response(system: &str, user: &str) -> String {
         .to_string();
     }
 
+    // Live course notes cleanup
+    if blob.contains("clean live course notes")
+        || blob.contains("raw_transcript")
+        || blob.contains("live class notes transcribed as text")
+    {
+        return json!({
+            "title": "[STUB] Notes nettoyées",
+            "summary": "Aperçu structuré du cours à partir du transcript texte (démo sans LLM distant).",
+            "cleaned_text": "## Points clés\n- Notion principale rappelée\n- Lien avec le PDF du cours\n\n## À retenir\n- Digressions retirées\n- Formulation clarifiée"
+        })
+        .to_string();
+    }
+
     // Remédiation podcast chapters (missed notions)
     if blob.contains("remédiation podcast")
         || blob.contains("MISSED quiz notions")
