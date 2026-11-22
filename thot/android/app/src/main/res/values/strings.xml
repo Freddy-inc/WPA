@@ -2,11 +2,15 @@
 <resources>
     <string name="app_name">Thot</string>
     <string name="server_url_title">Serveur Thot</string>
-    <string name="server_url_hint">http://192.168.x.x:8787</string>
-    <string name="server_url_message">L’APK est une coque WebView. Le backend Rust doit tourner à part (PC / même Wi‑Fi / tunnel). Entrez l’URL du serveur.</string>
+    <string name="server_url_hint">http://192.168.1.42:8787</string>
+    <string name="server_url_message">L’APK est une coque WebView. Le backend Rust doit tourner à part sur un PC (même Wi‑Fi) ou un tunnel.\n\n1. Sur le PC : export THOT_BIND=0.0.0.0 puis cargo run\n2. Entrez l’IP LAN du PC, ex. http://192.168.1.42:8787\n3. Pas 127.0.0.1 (c’est le téléphone, pas le PC)</string>
     <string name="action_save">Ouvrir</string>
-    <string name="action_cancel">Annuler</string>
+    <string name="action_retry">Réessayer</string>
     <string name="menu_server">Changer le serveur…</string>
     <string name="menu_reload">Recharger</string>
-    <string name="load_error">Impossible de joindre le serveur. Vérifiez que `cargo run` tourne et que le téléphone est sur le même réseau.</string>
+    <string name="error_title">Serveur injoignable</string>
+    <string name="error_checklist">Checklist (écran blanc = souvent ça) :\n\n• Sur le PC : THOT_BIND=0.0.0.0 (pas seulement 127.0.0.1)\n• Même Wi‑Fi téléphone ↔ PC (ou tunnel https)\n• Port 8787 ouvert / firewall\n• URL = http://&lt;IP-LAN-du-PC&gt;:8787\n• Cleartext HTTP autorisé dans cette APK debug\n• Groq / données : côté serveur Rust, pas dans l’APK\n\nUtilisez « Changer le serveur… » pour corriger l’URL.</string>
+    <string name="load_error">Impossible de joindre le serveur Thot.</string>
+    <string name="url_required">Entrez l’URL du serveur (IP du PC + port 8787).</string>
+    <string name="no_server_yet">Aucun serveur configuré</string>
 </resources>
