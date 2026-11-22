@@ -1,13 +1,13 @@
 //! Locate a missed notion / answer inside the active course PDF corpus.
+//! Page text comes from Rust (`lopdf` + `pdf-extract`) — no Python helper.
 
 use anyhow::{anyhow, Result};
 use serde::Serialize;
-use std::path::{Path, PathBuf};
-use std::process::Stdio;
-use tokio::process::Command;
+use std::path::Path;
 
 use crate::db::{Db, DocumentRow};
 use crate::generate::QuizMiss;
+use crate::pdf;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SourceHit {
@@ -133,14 +133,28 @@ async fn page_texts_for_doc(
 ) -> Result<Vec<String>> {
     let pdf_path = data_dir.join("docs").join(format!("{}.pdf", doc.id));
     if pdf_path.is_file() {
-        if let Ok(pages) = extract_pages_python(&pdf_path).await {
-            if !pages.is_empty() && pages.iter().any(|p| !p.trim().is_empty()) {
+        match tokio::task::spawn_blocking({
+            let pdf_path = pdf_path.clone();
+            move || pdf::extract_pages_from_path(&pdf_path)
+        })
+        .await
+        {
+            Ok(Ok(pages))
+                if !pages.is_empty() && pages.iter().any(|p| !p.trim().is_empty()) =>
+            {
                 let n = pages.len() as i64;
                 if n > 0 && n != doc.total_pages {
                     let _ = db.set_document_total_pages(doc.id, n).await;
                 }
                 return Ok(pages);
             }
+            Ok(Err(err)) => {
+                tracing::warn!(error = %err, path = %pdf_path.display(), "Rust page extract failed — text estimate");
+            }
+            Err(err) => {
+                tracing::warn!(error = %err, "page extract task join failed — text estimate");
+            }
+            _ => {}
         }
     }
     Ok(estimate_pages_from_text(&doc.text, doc.total_pages.max(1)))
@@ -169,38 +183,6 @@ fn estimate_pages_from_text(text: &str, total_pages: i64) -> Vec<String> {
         pages.push(chars[start..end].iter().collect());
     }
     pages
-}
-
-async fn extract_pages_python(pdf_path: &Path) -> Result<Vec<String>> {
-    let script = resolve_pdf_pages_script()?;
-    let out = Command::new("python3")
-        .arg(&script)
-        .arg("--pdf")
-        .arg(pdf_path)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .await?;
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr);
-        return Err(anyhow!("pdf_pages failed: {err}"));
-    }
-    let pages: Vec<String> = serde_json::from_slice(&out.stdout)?;
-    Ok(pages)
-}
-
-fn resolve_pdf_pages_script() -> Result<PathBuf> {
-    let candidates = [
-        PathBuf::from("scripts/pdf_pages.py"),
-        PathBuf::from("thot/scripts/pdf_pages.py"),
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("scripts/pdf_pages.py"),
-    ];
-    for c in candidates {
-        if c.is_file() {
-            return Ok(c);
-        }
-    }
-    Err(anyhow!("scripts/pdf_pages.py introuvable"))
 }
 
 fn score_match(page_text: &str, query: &str, notion: &str) -> f64 {

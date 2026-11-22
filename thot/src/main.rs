@@ -9,6 +9,7 @@ mod notes;
 mod pdf;
 mod podcast;
 mod source;
+mod tts;
 mod web_verify;
 
 use std::net::SocketAddr;
@@ -26,6 +27,9 @@ use crate::web_verify::WebVerifier;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // reqwest + msedge-tts both link rustls backends — pick one process-wide.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env().add_directive("thot=info".parse()?))
         .init();

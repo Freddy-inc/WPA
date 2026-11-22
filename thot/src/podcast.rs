@@ -1,13 +1,11 @@
-//! Course podcast overview: Groq script (two voices) + free edge-tts MP3 (Web Speech fallback).
+//! Course podcast overview: Groq script (two voices) + Rust MS Edge TTS MP3 (Web Speech fallback).
 //! Misses remédiation podcast: short chapters tied to quiz misses + course PDF pages.
 
-use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::path::Path;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tokio::process::Command;
 use tracing::{info, warn};
 
 use crate::db::{Db, PodcastRow};
@@ -15,6 +13,7 @@ use crate::generate::QuizMiss;
 use crate::llm::{LlmClient, ModelRole};
 use crate::pdf::chunk_text;
 use crate::source::{self, SourceHit};
+use crate::tts::{self, TtsTurn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PodcastTurn {
@@ -207,7 +206,7 @@ async fn persist_podcast(
                 .ok_or_else(|| anyhow!("podcast missing after audio update"))?
         }
         Err(err) => {
-            warn!(error = %err, "edge-tts failed; keeping webspeech fallback");
+            warn!(error = %err, "Rust msedge-tts failed; keeping webspeech fallback");
             draft
         }
     };
@@ -423,99 +422,13 @@ fn parse_turns(v: Option<&serde_json::Value>) -> Result<Vec<PodcastTurn>> {
 }
 
 async fn synthesize_mp3(script: &PodcastScript, l1: &str, out: &Path) -> Result<()> {
-    let script_path = resolve_tts_script()?;
-    let tmp_json = out.with_extension("json");
-    let payload = json!({ "turns": script.turns });
-    std::fs::write(&tmp_json, serde_json::to_vec_pretty(&payload)?)
-        .with_context(|| format!("write {}", tmp_json.display()))?;
-
-    let output = Command::new("python3")
-        .arg(&script_path)
-        .arg("--script")
-        .arg(&tmp_json)
-        .arg("--out")
-        .arg(out)
-        .arg("--lang")
-        .arg(l1)
-        .env(
-            "PYTHONPATH",
-            format!(
-                "{}:{}",
-                std::env::var("PYTHONPATH").unwrap_or_default(),
-                dirs_user_site().unwrap_or_default()
-            ),
-        )
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .await
-        .context("spawn python3 podcast_tts")?;
-
-    let _ = std::fs::remove_file(&tmp_json);
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let ok_file = out.is_file()
-        && std::fs::metadata(out)
-            .map(|m| m.len() > 64)
-            .unwrap_or(false);
-    if !output.status.success() && !ok_file {
-        return Err(anyhow!(
-            "podcast_tts exited with {}: {}",
-            output.status,
-            stderr.trim()
-        ));
-    }
-    if !ok_file {
-        return Err(anyhow!(
-            "mp3 not created at {} (stdout={} stderr={})",
-            out.display(),
-            stdout.trim(),
-            stderr.trim()
-        ));
-    }
-    if !output.status.success() {
-        warn!(
-            status = %output.status,
-            stderr = %stderr.trim(),
-            "podcast_tts non-zero exit but MP3 ok — accepting"
-        );
-    }
-    Ok(())
-}
-
-fn dirs_user_site() -> Option<String> {
-    let home = std::env::var_os("HOME")?;
-    let base = PathBuf::from(home).join(".local/lib");
-    let mut found = Vec::new();
-    if let Ok(rd) = std::fs::read_dir(&base) {
-        for ent in rd.flatten() {
-            let p = ent.path().join("site-packages");
-            if p.is_dir() {
-                found.push(p.display().to_string());
-            }
-        }
-    }
-    if found.is_empty() {
-        None
-    } else {
-        Some(found.join(":"))
-    }
-}
-
-fn resolve_tts_script() -> Result<PathBuf> {
-    let candidates = [
-        PathBuf::from("scripts/podcast_tts.py"),
-        PathBuf::from("thot/scripts/podcast_tts.py"),
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("scripts/podcast_tts.py"),
-    ];
-    for c in candidates {
-        if c.is_file() {
-            return Ok(c);
-        }
-    }
-    Err(anyhow!(
-        "scripts/podcast_tts.py introuvable (installez edge-tts: pip install edge-tts)"
-    ))
+    let turns: Vec<TtsTurn<'_>> = script
+        .turns
+        .iter()
+        .map(|t| TtsTurn {
+            speaker: t.speaker.as_str(),
+            text: t.text.as_str(),
+        })
+        .collect();
+    tts::synthesize_podcast_mp3(&turns, l1, out).await
 }

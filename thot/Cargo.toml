@@ -8,6 +8,8 @@ license = "MIT"
 [dependencies]
 anyhow = "1"
 axum = { version = "0.8", features = ["multipart"] }
+lopdf = "0.34"
+msedge-tts = { version = "0.4", default-features = false, features = ["tokio-runtime"] }
 pdf-extract = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
@@ -20,6 +22,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = { version = "0.4", features = ["serde"] }
 bytes = "1"
+# Explicit provider: reqwest (ring) + msedge-tts (aws-lc-rs) both pull rustls.
+rustls = { version = "0.23", default-features = false, features = ["std", "aws_lc_rs"] }
 
 [profile.release]
 lto = true

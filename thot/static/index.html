@@ -1126,7 +1126,7 @@
 
       <div class="hub-block" id="podcastSection">
         <h2>Podcast</h2>
-        <p class="meta">Aperçu audio à deux voix du corpus PDF, ou chapitres de remédiation liés aux notions manquées. Groq · edge-tts / Web Speech. Aucun micro.</p>
+        <p class="meta">Aperçu audio à deux voix du corpus PDF, ou chapitres de remédiation liés aux notions manquées. Groq · TTS Rust (MS Edge) / Web Speech. Aucun micro.</p>
         <div class="actions">
           <button type="button" id="podcastGenBtn">Générer un aperçu</button>
           <button type="button" class="secondary" id="podcastMissesBtn" hidden>Podcast notions manquées</button>
@@ -2845,7 +2845,7 @@
         setMsg(
           $("podcastMsg"),
           data.playback_mode === "mp3"
-            ? "Podcast prêt (MP3 edge-tts)."
+            ? "Podcast prêt (MP3 · TTS Rust)."
             : "Script prêt — lecture via Web Speech (TTS serveur indisponible).",
           true
         );

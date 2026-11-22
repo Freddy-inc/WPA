@@ -126,7 +126,7 @@ Reference UX: Apple **Aperçu / Preview** (iPhone / macOS) — rendered pages, s
 | `GET/PUT/DELETE` | `/api/notes/{id}` | PUT: `{ title, raw_text, cleaned_text? }` | Read / save draft / delete |
 | `POST` | `/api/notes/{id}/clean` | — | Groq cleanup: reformulate, keep course-relevant |
 | `GET` | `/api/podcasts` | — | List course podcast overviews |
-| `POST` | `/api/podcasts/generate` | — | Groq two-voice overview + edge-tts MP3 (or Web Speech fallback) |
+| `POST` | `/api/podcasts/generate` | — | Groq two-voice overview + Rust MS Edge TTS MP3 (or Web Speech fallback) |
 | `POST` | `/api/podcasts/generate-misses` | `{ "misses", "notions" }` | Remédiation podcast chapters tied to misses + PDF pages |
 | `GET` | `/api/podcasts/{id}` | — | Podcast + parsed script (incl. chapters) |
 | `GET` | `/api/podcasts/{id}/audio` | — | MP3 bytes when `playback_mode=mp3` |
@@ -152,7 +152,7 @@ Reference UX: Apple **Aperçu / Preview** (iPhone / macOS) — rendered pages, s
 - **Remédiation**: after quiz misses, show wrong answers + generate targeted new fiches (appended, not wipe) via Groq + course PDF context
 - Fiches / quiz generation: LLM (Groq) with course excerpt + effective L1/L2 (global or course override)
 - Fiche edits persist and feed progression count
-- **Podcast**: two-voice overview from course PDF (Groq script) + **edge-tts** MP3 (free) or Web Speech fallback; listed per course; **no mic retention**
+- **Podcast**: two-voice overview from course PDF (Groq script) + **Rust MS Edge TTS** MP3 (free) or Web Speech fallback; listed per course; **no mic retention**
 - **P1 vocab UX**: word status in PDF (à revoir / connu), « Derniers capturés » strip, Export CSV + Anki TSV
 - **P0 audit**: precise highlights (+ Surbrillance off), mark Connu/À revoir from Sens/fiche, remédiation → **Quiz ciblé**
 
@@ -167,9 +167,10 @@ Reference UX: Apple **Aperçu / Preview** (iPhone / macOS) — rendered pages, s
 thot/
   Cargo.toml
   README.md
-  scripts/       # podcast_tts.py (edge-tts)
-  src/           # pdf, llm, web_verify, glossary, generate, podcast, db, api
-  static/        # demo UI + vendor/pdfjs
+  src/           # pdf (+ per-page), tts (msedge), podcast, llm, glossary, generate, db, api
+  static/        # demo UI + vendor/pdfjs (browser-only)
   fixtures/      # sample PDF
   data/          # created at runtime (gitignored) — docs/ + podcasts/
 ```
+
+Requires a recent Rust stable (edition2024 crates such as `msedge-tts` need ~1.85+). Optional: `ffmpeg` on PATH for multi-turn MP3 concat quality.
