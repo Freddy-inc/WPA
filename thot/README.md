@@ -119,10 +119,12 @@ Reference UX: Apple **Aperçu / Preview** (iPhone / macOS) — rendered pages, s
 | `POST` | `/api/quiz/targeted` | `{ "notions":[], "misses"? }` | Quiz limited to missed notions |
 | `GET` | `/api/quiz` | — | Stored quiz |
 | `POST` | `/api/quiz/attempt` | `{ "score","total" }` | Record quiz attempt |
-| `POST` | `/api/quiz/remediate` | `{ "misses":[{question,notion,correct_answer,chosen_answer}] }` | Append remédiation fiches for misses (LLM + course context) |
+| `POST` | `/api/quiz/remediate` | `{ "misses":[{question,notion,correct_answer,chosen_answer}] }` | Append remédiation fiches + `sources[]` (PDF page hits) |
+| `POST` | `/api/source/locate` | `{ "query", "notion"? }` or `{ "misses":[] }` | Best course PDF page for a notion / miss |
 | `GET` | `/api/podcasts` | — | List course podcast overviews |
-| `POST` | `/api/podcasts/generate` | — | Groq two-voice script + edge-tts MP3 (or Web Speech fallback) |
-| `GET` | `/api/podcasts/{id}` | — | Podcast + parsed script |
+| `POST` | `/api/podcasts/generate` | — | Groq two-voice overview + edge-tts MP3 (or Web Speech fallback) |
+| `POST` | `/api/podcasts/generate-misses` | `{ "misses", "notions" }` | Remédiation podcast chapters tied to misses + PDF pages |
+| `GET` | `/api/podcasts/{id}` | — | Podcast + parsed script (incl. chapters) |
 | `GET` | `/api/podcasts/{id}/audio` | — | MP3 bytes when `playback_mode=mp3` |
 | `POST` | `/api/pages/open` | `{ "page","total_pages?","doc_id?" }` | Mark page opened for a doc |
 | `GET` | `/api/progression` | — | Per-doc + total lecture / fiches / quiz |

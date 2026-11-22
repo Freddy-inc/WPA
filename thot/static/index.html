@@ -267,6 +267,34 @@
       margin: 0 0 0.55rem;
       letter-spacing: -0.02em;
     }
+    .source-jump {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      margin-top: 0.4rem;
+      min-height: 40px;
+      padding: 0.45rem 0.75rem;
+      font-size: 0.82rem;
+      font-weight: 600;
+      border-radius: 999px;
+      border: 1px solid rgba(13, 122, 104, 0.35);
+      background: rgba(255,255,255,0.7);
+      color: var(--accent);
+    }
+    .source-jump:active { transform: scale(0.97); }
+    .chapter-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+      padding: 0.65rem 0.2rem;
+      border-top: 1px solid var(--line-strong);
+    }
+    .chapter-row:first-child { border-top: none; }
+    .pdf-flash .textLayer {
+      outline: 2px solid rgba(13, 122, 104, 0.45);
+      outline-offset: 2px;
+    }
     .search-wrap {
       position: relative;
       margin: 0.35rem 0 0.85rem;
@@ -958,6 +986,7 @@
         <div class="actions" style="margin-top:0.5rem">
           <button type="button" class="secondary" id="ficheMarkReview">Marquer à revoir</button>
           <button type="button" class="secondary" id="ficheMarkKnown">Marquer connu</button>
+          <button type="button" class="ghost" id="ficheToPdf" hidden>Voir dans le PDF</button>
         </div>
         <div id="ficheSaveMsg"></div>
       </div>
@@ -1036,15 +1065,17 @@
 
       <div class="hub-block" id="podcastSection">
         <h2>Podcast</h2>
-        <p class="meta">Aperçu audio à deux voix du corpus PDF. Script via Groq · edge-tts ou Web Speech. Aucun micro.</p>
+        <p class="meta">Aperçu audio à deux voix du corpus PDF, ou chapitres de remédiation liés aux notions manquées. Groq · edge-tts / Web Speech. Aucun micro.</p>
         <div class="actions">
           <button type="button" id="podcastGenBtn">Générer un aperçu</button>
+          <button type="button" class="secondary" id="podcastMissesBtn" hidden>Podcast notions manquées</button>
           <button type="button" class="ghost" id="podcastStopBtn" hidden>Stop</button>
         </div>
         <div id="podcastMsg"></div>
         <div id="podcastPlayer" class="fiche-panel" hidden style="margin-top:0.75rem">
           <p class="meta" id="podcastNowTitle"></p>
           <audio id="podcastAudio" controls style="width:100%;margin:0.4rem 0"></audio>
+          <div id="podcastChapters" class="fiche-list" style="margin:0.45rem 0"></div>
           <div id="podcastScriptPreview" class="meta" style="max-height:9rem;overflow:auto;white-space:pre-wrap"></div>
         </div>
         <div id="podcastList" class="fiche-list" style="margin-top:0.75rem"></div>
@@ -1126,6 +1157,8 @@
     let vocabStatus = {}; // term -> "review" | "known"
     let vocabHighlightOn = localStorage.getItem("thot_vocab_hl") !== "0";
     let lastMissNotions = [];
+    let lastMisses = [];
+    let lastMissSources = [];
     const MIN_VOCAB_TOKEN_LEN = 4;
     const MAX_VOCAB_TERM_WORDS = 4;
     let editingFicheId = null;
@@ -1515,6 +1548,102 @@
       await renderPage(currentPage);
       updatePager();
       setHubTab("readerSection");
+    }
+
+    async function goToPdfPage(pageNum) {
+      if (!pdfDoc) return;
+      const n = Math.max(1, Math.min(pdfDoc.numPages, Number(pageNum) || 1));
+      currentPage = n;
+      await renderPage(currentPage);
+      updatePager();
+      const scroll = $("pdfScroll");
+      scroll?.classList.add("pdf-flash");
+      setTimeout(() => scroll?.classList.remove("pdf-flash"), 1200);
+    }
+
+    /** Jump to course PDF page for a miss / remédiation (Lecture tab). */
+    async function jumpToSource(src) {
+      if (!src || !src.doc_id) {
+        setHubTab("import");
+        return;
+      }
+      try {
+        if (activeDocId !== src.doc_id || !pdfDoc) {
+          const data = await api(`/api/documents/${src.doc_id}/activate`, { method: "PUT" });
+          activeDocId = data.document?.id || src.doc_id;
+          $("pdfTitle").textContent = data.document?.filename || src.filename || "Cours";
+          renderDocuments(
+            (await api("/api/documents")).documents || [],
+            data.document
+          );
+          await openPdf(data.pdf_url || `/api/documents/${src.doc_id}/pdf`);
+        } else {
+          setHubTab("readerSection");
+        }
+        let page = Number(src.page) || 1;
+        // Refine with PDF.js text search when possible
+        const q = (src.query || src.notion || "").trim();
+        if (q && pdfDoc && pdfDoc.numPages > 1) {
+          const found = await findPageForQuery(q);
+          if (found) page = found;
+        }
+        await goToPdfPage(page);
+      } catch (e) {
+        setMsg($("importMsg"), e.message, false);
+        setHubTab("import");
+      }
+    }
+
+    async function findPageForQuery(query) {
+      if (!pdfDoc || !query) return null;
+      const needle = query.toLowerCase();
+      let best = null;
+      let bestScore = 0;
+      for (let p = 1; p <= pdfDoc.numPages; p++) {
+        const page = await pdfDoc.getPage(p);
+        const tc = await page.getTextContent();
+        const text = tc.items.map((it) => it.str || "").join(" ").toLowerCase();
+        let score = 0;
+        if (text.includes(needle)) score += 10 + needle.length * 0.1;
+        for (const tok of needle.split(/\s+/)) {
+          if (tok.length >= 4 && text.includes(tok)) score += 1;
+        }
+        if (score > bestScore) {
+          bestScore = score;
+          best = p;
+        }
+      }
+      return bestScore > 0 ? best : null;
+    }
+
+    function sourceButtonHtml(src, extraClass = "") {
+      if (!src || !src.doc_id) return "";
+      const label = `Voir p.${src.page || 1}`;
+      const title = `${src.filename || "PDF"} · p.${src.page || 1}`;
+      return `<button type="button" class="source-jump ${extraClass}" data-doc="${src.doc_id}" data-page="${src.page || 1}" data-query="${escapeHtml(src.query || src.notion || "")}" data-notion="${escapeHtml(src.notion || "")}" data-file="${escapeHtml(src.filename || "")}" title="${escapeHtml(title)}">${label}</button>`;
+    }
+
+    function bindSourceButtons(root) {
+      root?.querySelectorAll(".source-jump").forEach((btn) => {
+        btn.onclick = () => {
+          jumpToSource({
+            doc_id: Number(btn.dataset.doc),
+            page: Number(btn.dataset.page) || 1,
+            query: btn.dataset.query || "",
+            notion: btn.dataset.notion || "",
+            filename: btn.dataset.file || "",
+          });
+        };
+      });
+    }
+
+    function sourceForNotion(notion) {
+      const n = (notion || "").toLowerCase();
+      return lastMissSources.find((s) =>
+        (s.notion || "").toLowerCase() === n
+        || (s.query || "").toLowerCase().includes(n)
+        || n.includes((s.notion || "").toLowerCase())
+      ) || lastMissSources[0] || null;
     }
 
     function updatePager() {
@@ -2033,9 +2162,30 @@
         editingFicheId = f.id;
         $("ficheFront").value = f.front;
         $("ficheBack").value = f.back;
-        $("ficheOrigin").textContent = f.edited
-          ? "Origine : auto · modifiée par vous"
-          : "Origine : auto";
+        const isRemed = /^\[Remédiation\]/i.test(f.front || "") || /remédiation/i.test(f.front || "");
+        $("ficheOrigin").textContent = isRemed
+          ? (f.edited ? "Origine : remédiation · modifiée" : "Origine : remédiation quiz")
+          : (f.edited ? "Origine : auto · modifiée par vous" : "Origine : auto");
+        const toPdf = $("ficheToPdf");
+        if (toPdf) {
+          toPdf.hidden = false;
+          toPdf.onclick = async () => {
+            const notion = String(f.front || "").replace(/^\[Remédiation\]\s*/i, "").trim();
+            let src = sourceForNotion(notion);
+            if (!src) {
+              try {
+                const loc = await api("/api/source/locate", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ notion, query: notion }),
+                });
+                src = loc.source || (loc.sources || [])[0];
+              } catch (_) {}
+            }
+            if (src) await jumpToSource(src);
+            else scrollToPdf();
+          };
+        }
         setMsg($("ficheSaveMsg"), "", true);
         $("fichesListView").hidden = true;
         $("ficheReviseView").hidden = true;
@@ -2318,7 +2468,8 @@
         }
       });
       const total = quizQuestions.length;
-      const feedback = quizQuestions.map((q, i) => {
+      // Placeholder feedback; enriched after locate/remediate with PDF page jumps
+      const renderFeedback = (sources) => quizQuestions.map((q, i) => {
         const ok = quizAnswers[i] === q.answer_index;
         const chosen = q.choices[quizAnswers[i]] || "—";
         const correct = q.choices[q.answer_index] || "—";
@@ -2326,22 +2477,28 @@
           return `<div class="quiz-miss ok"><div class="tag">✓ Correct · ${escapeHtml(q.notion || "notion")}</div>
             <div>${escapeHtml(q.question)}</div></div>`;
         }
+        const src = (sources || []).find((s) =>
+          (s.notion || "").toLowerCase() === (q.notion || "").toLowerCase()
+        ) || (sources || [])[0];
         return `<div class="quiz-miss"><div class="tag">✗ À revoir · ${escapeHtml(q.notion || "notion")}</div>
           <div>${escapeHtml(q.question)}</div>
           <div class="meta">Votre réponse : ${escapeHtml(chosen)}</div>
-          <div class="meta">Bonne réponse : ${escapeHtml(correct)}</div></div>`;
+          <div class="meta">Bonne réponse : ${escapeHtml(correct)}</div>
+          ${sourceButtonHtml(src)}</div>`;
       }).join("");
+
       $("quizOut").innerHTML = `
         <div class="quiz-q">
           <h3 style="font-family:var(--font-display);margin:0 0 0.5rem">Résultat</h3>
           <div class="value" style="font-size:1.25rem;font-weight:600">Score : ${score} / ${total}</div>
-          <div style="margin-top:0.75rem">${feedback}</div>
+          <div id="quizFeedback" style="margin-top:0.75rem">${renderFeedback([])}</div>
           <div id="remediationPanel" class="remediation-box" ${misses.length ? "" : "hidden"}>
             <h4>Remédiation</h4>
             <p class="meta" id="remediationStatus">${misses.length ? "Préparation de fiches ciblées…" : ""}</p>
             <div id="remediationFiches"></div>
             <div class="actions" id="remediationQuizActions" ${misses.length ? "" : "hidden"} style="margin-top:0.55rem">
               <button type="button" id="quizTargetedBtn">Quiz ciblé (notions manquées)</button>
+              <button type="button" class="secondary" id="quizMissesPodcastBtn">Podcast notions manquées</button>
             </div>
           </div>
           <div class="actions">
@@ -2352,6 +2509,7 @@
           </div>
         </div>
       `;
+      bindSourceButtons($("quizFeedback"));
       try {
         const res = await api("/api/quiz/attempt", {
           method: "POST",
@@ -2364,9 +2522,14 @@
         setMsg($("genMsg"), e.message, false);
       }
 
+      lastMisses = misses.slice();
       lastMissNotions = misses
         .map((m) => (m.notion || "").trim() || (m.question || "").trim())
         .filter(Boolean);
+      lastMissSources = [];
+      if ($("podcastMissesBtn")) {
+        $("podcastMissesBtn").hidden = !misses.length;
+      }
 
       if (misses.length) {
         try {
@@ -2379,20 +2542,28 @@
           if (Array.isArray(rem.notions) && rem.notions.length) {
             lastMissNotions = rem.notions;
           }
+          lastMissSources = rem.sources || [];
+          const fb = $("quizFeedback");
+          if (fb) {
+            fb.innerHTML = renderFeedback(lastMissSources);
+            bindSourceButtons(fb);
+          }
           if (rem.progression) renderProgression(rem.progression);
           if (newFiches.length) {
             fichesCache = [...fichesCache, ...newFiches];
             renderFichesList();
             $("remediationStatus").textContent =
               `${newFiches.length} nouvelle${newFiches.length > 1 ? "s" : ""} fiche${newFiches.length > 1 ? "s" : ""} de remédiation ajoutée${newFiches.length > 1 ? "s" : ""}.`;
-            $("remediationFiches").innerHTML = newFiches.map((f) => {
-              const title = String(f.front || "").replace(/^\[Remédiation\]\s*/, "");
+            $("remediationFiches").innerHTML = newFiches.map((f, idx) => {
+              const title = String(f.front || "").replace(/^\[Remédiation\]\s*/i, "");
+              const src = lastMissSources[idx] || sourceForNotion(title) || lastMissSources[0];
               return `<div class="quiz-miss ok" style="margin-top:0.45rem">
                 <div class="tag">Nouvelle fiche</div>
                 <strong>${escapeHtml(title)}</strong>
                 <div class="meta">${escapeHtml((f.back || "").slice(0, 220))}${(f.back || "").length > 220 ? "…" : ""}</div>
                 <div class="actions" style="margin-top:0.4rem">
                   <button type="button" class="secondary remed-open" data-id="${f.id}">Revoir fiche</button>
+                  ${sourceButtonHtml(src)}
                 </div>
               </div>`;
             }).join("");
@@ -2403,6 +2574,7 @@
                 openFicheEditor(id);
               };
             });
+            bindSourceButtons($("remediationFiches"));
           } else {
             $("remediationStatus").textContent = "Aucune fiche générée.";
           }
@@ -2436,9 +2608,17 @@
           }
         };
       }
+      const missPodBtn = $("quizMissesPodcastBtn");
+      if (missPodBtn) {
+        missPodBtn.onclick = () => generateMissesPodcast();
+      }
       $("quizToFiches").onclick = () => setHubTab("fichesSection");
       $("quizToProg").onclick = () => setHubTab("suitePanel");
-      $("quizToPdf").onclick = scrollToPdf;
+      $("quizToPdf").onclick = () => {
+        const src = lastMissSources[0];
+        if (src) jumpToSource(src);
+        else scrollToPdf();
+      };
     }
 
     let podcastSpeechQueue = [];
@@ -2508,7 +2688,9 @@
       const row = data.podcast || {};
       const script = data.script || {};
       $("podcastPlayer").hidden = false;
-      $("podcastNowTitle").textContent = `${row.title || "Podcast"} · mode ${row.playback_mode || "?"}`;
+      const kind = script.kind === "misses" ? "remédiation" : "aperçu";
+      $("podcastNowTitle").textContent = `${row.title || "Podcast"} · ${kind} · ${row.playback_mode || "?"}`;
+      renderPodcastChapters(script);
       $("podcastScriptPreview").textContent = renderPodcastScript(script);
       if (row.playback_mode === "mp3" && row.audio_relpath) {
         const audio = $("podcastAudio");
@@ -2522,6 +2704,34 @@
       }
     }
 
+    function renderPodcastChapters(script) {
+      const el = $("podcastChapters");
+      if (!el) return;
+      const chapters = script?.chapters || [];
+      if (!chapters.length) {
+        el.innerHTML = "";
+        return;
+      }
+      el.innerHTML = `<p class="meta" style="margin:0 0 0.35rem">Chapitres (liés au PDF du cours)</p>` + chapters.map((ch) => {
+        const src = {
+          doc_id: ch.doc_id,
+          page: ch.page || 1,
+          notion: ch.notion || "",
+          query: ch.notion || "",
+          filename: ch.filename || "",
+        };
+        const pageLabel = ch.page ? `p.${ch.page}` : "PDF";
+        return `<div class="chapter-row">
+          <div>
+            <strong>${escapeHtml(ch.notion || "Notion")}</strong>
+            <div class="sub">${escapeHtml(pageLabel)}${ch.filename ? " · " + escapeHtml(ch.filename) : ""}</div>
+          </div>
+          ${ch.doc_id ? sourceButtonHtml(src) : `<span class="meta">${escapeHtml(pageLabel)}</span>`}
+        </div>`;
+      }).join("");
+      bindSourceButtons(el);
+    }
+
     function renderPodcastList(podcasts) {
       const el = $("podcastList");
       if (!podcasts.length) {
@@ -2529,11 +2739,16 @@
         return;
       }
       el.innerHTML = podcasts.map((p) => {
+        let kind = "aperçu";
+        try {
+          const sc = JSON.parse(p.script_json || "{}");
+          if (sc.kind === "misses") kind = "remédiation";
+        } catch (_) {}
         const mode = p.playback_mode === "mp3" ? "MP3" : "Web Speech";
         return `<div class="fiche-row">
           <div>
             <strong>${escapeHtml(p.title || "Podcast")}</strong>
-            <div class="meta">${escapeHtml(mode)} · ${escapeHtml((p.created_at || "").slice(0, 19))}</div>
+            <div class="meta">${escapeHtml(kind)} · ${escapeHtml(mode)} · ${escapeHtml((p.created_at || "").slice(0, 19))}</div>
           </div>
           <button type="button" class="secondary podcast-play" data-id="${p.id}">Écouter</button>
         </div>`;
@@ -2576,7 +2791,46 @@
       }
     }
 
+    async function generateMissesPodcast() {
+      if (!lastMisses.length && !lastMissNotions.length) {
+        setMsg($("podcastMsg"), "Passez d’abord un quiz avec des erreurs.", false);
+        setHubTab("suitePanel");
+        return;
+      }
+      setHubTab("suitePanel");
+      setMsg($("podcastMsg"), "Podcast remédiation (notions manquées + pages PDF)…", true);
+      if ($("podcastMissesBtn")) $("podcastMissesBtn").disabled = true;
+      const quizBtn = $("quizMissesPodcastBtn");
+      if (quizBtn) quizBtn.disabled = true;
+      try {
+        const data = await api("/api/podcasts/generate-misses", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ misses: lastMisses, notions: lastMissNotions }),
+        });
+        if (Array.isArray(data.sources) && data.sources.length) {
+          lastMissSources = data.sources;
+        }
+        const p = data.podcast || {};
+        setMsg(
+          $("podcastMsg"),
+          data.playback_mode === "mp3"
+            ? "Remédiation audio prête (MP3)."
+            : "Remédiation audio prête — Web Speech.",
+          true
+        );
+        await loadPodcasts();
+        if (p.id) await playPodcast(p.id);
+      } catch (e) {
+        setMsg($("podcastMsg"), e.message, false);
+      } finally {
+        if ($("podcastMissesBtn")) $("podcastMissesBtn").disabled = false;
+        if (quizBtn) quizBtn.disabled = false;
+      }
+    }
+
     $("podcastGenBtn").onclick = () => generatePodcast();
+    $("podcastMissesBtn").onclick = () => generateMissesPodcast();
     $("podcastStopBtn").onclick = () => stopPodcastPlayback();
     if (window.speechSynthesis) {
       speechSynthesis.onvoiceschanged = () => speechSynthesis.getVoices();
@@ -2639,6 +2893,12 @@
       showQuizLaunch();
       await refreshQuizLaunch();
     };
+
+    // Expose for demos / agent screenshots (no secrets)
+    window.jumpToSource = jumpToSource;
+    window.playPodcast = playPodcast;
+    window.generateMissesPodcast = generateMissesPodcast;
+    window.setHubTab = setHubTab;
 
     refreshStatus();
   </script>

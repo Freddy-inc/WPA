@@ -64,9 +64,11 @@ pub fn router(state: AppState) -> Router {
         .route("/api/quiz", get(get_quiz))
         .route("/api/quiz/attempt", post(quiz_attempt))
         .route("/api/quiz/remediate", post(quiz_remediate))
+        .route("/api/source/locate", post(source_locate))
         .route("/api/quiz/targeted", post(quiz_targeted))
         .route("/api/podcasts", get(list_podcasts))
         .route("/api/podcasts/generate", post(generate_podcast))
+        .route("/api/podcasts/generate-misses", post(generate_misses_podcast))
         .route("/api/podcasts/{id}", get(get_podcast))
         .route("/api/podcasts/{id}/audio", get(podcast_audio))
         .route("/api/pages/open", post(open_page))
@@ -1117,6 +1119,9 @@ async fn quiz_remediate(
     let fiches = generate::remediate_misses(&st.db, &st.llm, &body.misses)
         .await
         .map_err(map_llm_err)?;
+    let sources = crate::source::locate_misses(&st.db, &st.data_dir, &body.misses)
+        .await
+        .unwrap_or_default();
     let snap = st.db.progression_snapshot().await.map_err(ApiError::from)?;
     let notions: Vec<String> = body
         .misses
@@ -1136,7 +1141,55 @@ async fn quiz_remediate(
         "fiches": fiches,
         "count": fiches.len(),
         "notions": notions,
+        "sources": sources,
         "progression": snap,
+    })))
+}
+
+#[derive(Deserialize)]
+struct SourceLocateBody {
+    #[serde(default)]
+    query: String,
+    #[serde(default)]
+    notion: String,
+    #[serde(default)]
+    misses: Vec<QuizMiss>,
+}
+
+async fn source_locate(
+    State(st): State<Arc<AppState>>,
+    Json(body): Json<SourceLocateBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if !body.misses.is_empty() {
+        let sources = crate::source::locate_misses(&st.db, &st.data_dir, &body.misses)
+            .await
+            .map_err(|e| ApiError::bad(e.to_string()))?;
+        return Ok(Json(json!({ "ok": true, "sources": sources, "count": sources.len() })));
+    }
+    let notion = if body.notion.trim().is_empty() {
+        body.query.trim().to_string()
+    } else {
+        body.notion.trim().to_string()
+    };
+    let query = if body.query.trim().is_empty() {
+        notion.clone()
+    } else {
+        body.query.trim().to_string()
+    };
+    if query.chars().count() < 2 {
+        return Err(ApiError::bad("query trop courte"));
+    }
+    let hit = crate::source::locate_query_str(&st.db, &st.data_dir, &notion, &query)
+        .await
+        .map_err(|e| ApiError::bad(e.to_string()))?;
+    let sources = match &hit {
+        Some(h) => vec![h.clone()],
+        None => vec![],
+    };
+    Ok(Json(json!({
+        "ok": true,
+        "source": hit,
+        "sources": sources,
     })))
 }
 
@@ -1212,6 +1265,45 @@ async fn generate_podcast(
         "ok": true,
         "podcast": row,
         "playback_mode": row.playback_mode,
+        "kind": "overview",
+    })))
+}
+
+#[derive(Deserialize, Default)]
+struct PodcastMissesBody {
+    #[serde(default)]
+    notions: Vec<String>,
+    #[serde(default)]
+    misses: Vec<QuizMiss>,
+}
+
+async fn generate_misses_podcast(
+    State(st): State<Arc<AppState>>,
+    Json(body): Json<PodcastMissesBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if body.misses.is_empty() && body.notions.is_empty() {
+        return Err(ApiError::bad(
+            "notions ou misses requis pour un podcast de remédiation",
+        ));
+    }
+    let (row, sources) = podcast::generate_misses_podcast(
+        &st.db,
+        &st.llm,
+        &st.data_dir,
+        &body.misses,
+        &body.notions,
+    )
+    .await
+    .map_err(map_llm_err)?;
+    let script: serde_json::Value =
+        serde_json::from_str(&row.script_json).unwrap_or_else(|_| json!({ "turns": [] }));
+    Ok(Json(json!({
+        "ok": true,
+        "podcast": row,
+        "script": script,
+        "sources": sources,
+        "playback_mode": row.playback_mode,
+        "kind": "misses",
     })))
 }
 

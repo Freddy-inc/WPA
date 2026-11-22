@@ -411,6 +411,46 @@ fn stub_response(system: &str, user: &str) -> String {
         .to_string();
     }
 
+    // Remédiation podcast chapters (missed notions)
+    if blob.contains("remédiation podcast")
+        || blob.contains("MISSED quiz notions")
+        || blob.contains("remédiation audio chapters")
+    {
+        return json!({
+            "title": "[STUB] Remédiation — notions manquées",
+            "kind": "misses",
+            "chapters": [
+                {
+                    "notion": "chlorophyll",
+                    "page": 1,
+                    "turns": [
+                        {"speaker": "A", "text": "Tu as raté la chlorophylle — c’est le pigment qui capte la lumière."},
+                        {"speaker": "B", "text": "Et on le trouve où dans le PDF ?"},
+                        {"speaker": "A", "text": "Dans les chloroplastes, page du cours sur la photosynthèse."}
+                    ]
+                },
+                {
+                    "notion": "thylakoid",
+                    "page": 1,
+                    "turns": [
+                        {"speaker": "A", "text": "Les thylakoïdes : c’est là que se passent les réactions lumineuses."},
+                        {"speaker": "B", "text": "Donc pas dans le stroma ?"},
+                        {"speaker": "A", "text": "Exact — le stroma, c’est plutôt le Calvin."}
+                    ]
+                }
+            ],
+            "turns": [
+                {"speaker": "A", "text": "Tu as raté la chlorophylle — c’est le pigment qui capte la lumière."},
+                {"speaker": "B", "text": "Et on le trouve où dans le PDF ?"},
+                {"speaker": "A", "text": "Dans les chloroplastes, page du cours sur la photosynthèse."},
+                {"speaker": "A", "text": "Les thylakoïdes : c’est là que se passent les réactions lumineuses."},
+                {"speaker": "B", "text": "Donc pas dans le stroma ?"},
+                {"speaker": "A", "text": "Exact — le stroma, c’est plutôt le Calvin."}
+            ]
+        })
+        .to_string();
+    }
+
     // Two-voice podcast overview
     if blob.contains("two-host study podcast")
         || blob.contains("\"turns\"")
@@ -420,6 +460,8 @@ fn stub_response(system: &str, user: &str) -> String {
     {
         return json!({
             "title": "[STUB] Aperçu audio du cours",
+            "kind": "overview",
+            "chapters": [],
             "turns": [
                 {"speaker": "A", "text": "Bonjour — aujourd’hui on fait un aperçu rapide de la photosynthèse."},
                 {"speaker": "B", "text": "D’accord. C’est quoi l’idée centrale ?"},
