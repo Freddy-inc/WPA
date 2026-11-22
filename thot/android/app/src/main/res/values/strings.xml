@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Thot</string>
+    <string name="server_url_title">Serveur Thot</string>
+    <string name="server_url_hint">http://192.168.x.x:8787</string>
+    <string name="server_url_message">L’APK est une coque WebView. Le backend Rust doit tourner à part (PC / même Wi‑Fi / tunnel). Entrez l’URL du serveur.</string>
+    <string name="action_save">Ouvrir</string>
+    <string name="action_cancel">Annuler</string>
+    <string name="menu_server">Changer le serveur…</string>
+    <string name="menu_reload">Recharger</string>
+    <string name="load_error">Impossible de joindre le serveur. Vérifiez que `cargo run` tourne et que le téléphone est sur le même réseau.</string>
+</resources>

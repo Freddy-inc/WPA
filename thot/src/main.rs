@@ -82,7 +82,12 @@ async fn main() -> anyhow::Result<()> {
         .ok()
         .and_then(|p| p.parse().ok())
         .unwrap_or(8787);
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    // Default loopback. For phone APK on LAN: THOT_BIND=0.0.0.0
+    let host = std::env::var("THOT_BIND").unwrap_or_else(|_| "127.0.0.1".into());
+    let ip: std::net::IpAddr = host
+        .parse()
+        .map_err(|e| anyhow::anyhow!("THOT_BIND invalide ({host}): {e}"))?;
+    let addr = SocketAddr::from((ip, port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!("Thot listening on http://{addr}");
     axum::serve(listener, app).await?;

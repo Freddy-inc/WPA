@@ -169,8 +169,21 @@ thot/
   README.md
   src/           # pdf (+ per-page), tts (msedge), podcast, llm, glossary, generate, db, api
   static/        # demo UI + vendor/pdfjs (browser-only)
+  android/       # debug WebView APK shell (backend still separate)
   fixtures/      # sample PDF
   data/          # created at runtime (gitignored) — docs/ + podcasts/
 ```
 
 Requires a recent Rust stable (edition2024 crates such as `msedge-tts` need ~1.85+). Optional: `ffmpeg` on PATH for multi-turn MP3 concat quality.
+
+### Android debug APK (phone feedback)
+
+WebView shell under `android/` — sideload `app-debug.apk`. Backend stays separate:
+
+```bash
+export THOT_BIND=0.0.0.0   # so the phone can reach this machine
+cargo run
+# phone: enter http://<LAN-IP>:8787
+```
+
+See store `docs/thot-android-apk.md`.
