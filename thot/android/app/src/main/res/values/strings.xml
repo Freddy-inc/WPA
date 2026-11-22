@@ -13,4 +13,7 @@
     <string name="groq_key_message">Optionnel. Stockée uniquement dans les fichiers privés de l’app (pas dans le dépôt). Sans clé, Thot fonctionne en mode stub pour une partie des features. Ne partagez jamais votre clé.</string>
     <string name="groq_saved_restart">Clé enregistrée — redémarrage du serveur local…</string>
     <string name="groq_cleared">Clé effacée</string>
+    <string name="choose_pdf">Choisir un PDF</string>
+    <string name="mic_denied">Micro refusé — activez-le dans les réglages Android pour dicter des notes.</string>
+    <string name="speech_unavailable">Reconnaissance vocale indisponible sur cet appareil (pas de service Google/Speech).</string>
 </resources>
