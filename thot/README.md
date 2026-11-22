@@ -169,21 +169,21 @@ thot/
   README.md
   src/           # pdf (+ per-page), tts (msedge), podcast, llm, glossary, generate, db, api
   static/        # demo UI + vendor/pdfjs (browser-only)
-  android/       # debug WebView APK shell (backend still separate)
+  android/       # debug APK — embedded axum via JNI (libthot.so)
   fixtures/      # sample PDF
   data/          # created at runtime (gitignored) — docs/ + podcasts/
 ```
 
 Requires a recent Rust stable (edition2024 crates such as `msedge-tts` need ~1.85+). Optional: `ffmpeg` on PATH for multi-turn MP3 concat quality.
 
-### Android debug APK (phone feedback)
+### Android debug APK (embedded backend)
 
-WebView shell under `android/` — sideload `app-debug.apk`. Backend stays separate:
+`android/` ships `libthot.so` + UI assets. The app starts axum on **127.0.0.1** — **no PC URL**. Optional Groq key in-app (device storage only).
 
 ```bash
-export THOT_BIND=0.0.0.0   # so the phone can reach this machine
-cargo run
-# phone: enter http://<LAN-IP>:8787
+export ANDROID_NDK_HOME=$HOME/Android/Sdk/ndk/26.1.10909125
+./android/build-native.sh
+cd android && ./gradlew assembleDebug
 ```
 
 See store `docs/thot-android-apk.md`.

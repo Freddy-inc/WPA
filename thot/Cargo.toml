@@ -5,6 +5,15 @@ edition = "2021"
 description = "Thot MVP vertical slice — PDF study loop with free AI glossary, fiches, and quiz"
 license = "MIT"
 
+[lib]
+name = "thot"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "thot"
+path = "src/main.rs"
+
 [dependencies]
 anyhow = "1"
 axum = { version = "0.8", features = ["multipart"] }
@@ -24,6 +33,9 @@ chrono = { version = "0.4", features = ["serde"] }
 bytes = "1"
 # Explicit provider: reqwest (ring) + msedge-tts (aws-lc-rs) both pull rustls.
 rustls = { version = "0.23", default-features = false, features = ["std", "aws_lc_rs"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = { version = "0.21", default-features = false }
 
 [profile.release]
 lto = true

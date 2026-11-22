@@ -6,3 +6,4 @@
 *.iml
 .DS_Store
 /captures/
+# keep jniLibs/*.so and assets/thot-static for assembleDebug without NDK

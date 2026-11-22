@@ -1,12 +1,19 @@
-# Thot Android (debug WebView shell)
+# Thot Android — embedded Rust (debug)
 
-Sideloadable **debug APK** for phone feedback. The Rust backend is **not** embedded — run it on a PC with `THOT_BIND=0.0.0.0` and point the app at `http://<LAN-IP>:8787`.
+The APK starts **axum inside the process** (`libthot.so` via JNI) and loads `http://127.0.0.1:8787` in a WebView.
 
-If you see a **blank white screen**, the server URL is almost always unreachable — install **0.1.1+** (error panel) and follow the checklist in store `docs/thot-android-apk.md`.
+**No external PC/cloud URL** for basic UI + SQLite. Optional Groq key via the gear icon (device-only).
 
 ```bash
+# Native libs (NDK) + sync static assets
+export ANDROID_NDK_HOME=$HOME/Android/Sdk/ndk/26.1.10909125
+./build-native.sh
+
+# APK
 export ANDROID_HOME=$HOME/Android/Sdk
 echo "sdk.dir=$ANDROID_HOME" > local.properties
 ./gradlew assembleDebug
-# → app/build/outputs/apk/debug/app-debug.apk  (versionName 0.1.1-debug)
+# → app/build/outputs/apk/debug/app-debug.apk
 ```
+
+Full notes: store `docs/thot-android-apk.md`.

@@ -107,7 +107,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
                     android:lineSpacingExtra="4dp"
-                    android:text="@string/error_checklist"
+                    android:text="@string/error_checklist_embedded"
                     android:textColor="#223"
                     android:textSize="15sp" />
 

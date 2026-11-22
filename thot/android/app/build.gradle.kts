@@ -11,8 +11,11 @@ android {
         applicationId = "app.thot.mobile"
         minSdk = 26
         targetSdk = 34
-        versionCode = 2
-        versionName = "0.1.1-debug"
+        versionCode = 3
+        versionName = "0.2.0-embedded-debug"
+        ndk {
+            abiFilters += listOf("arm64-v8a", "x86_64")
+        }
     }
 
     buildTypes {
@@ -37,6 +40,11 @@ android {
     }
     buildFeatures {
         viewBinding = true
+    }
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
     }
 }
 

@@ -2662,6 +2662,7 @@ dependencies = [
  "axum",
  "bytes",
  "chrono",
+ "jni 0.21.1",
  "lopdf",
  "msedge-tts",
  "pdf-extract",

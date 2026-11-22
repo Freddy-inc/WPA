@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Thot</string>
-    <string name="server_url_title">Serveur Thot</string>
-    <string name="server_url_hint">http://192.168.1.42:8787</string>
-    <string name="server_url_message">L’APK est une coque WebView. Le backend Rust doit tourner à part sur un PC (même Wi‑Fi) ou un tunnel.\n\n1. Sur le PC : export THOT_BIND=0.0.0.0 puis cargo run\n2. Entrez l’IP LAN du PC, ex. http://192.168.1.42:8787\n3. Pas 127.0.0.1 (c’est le téléphone, pas le PC)</string>
-    <string name="action_save">Ouvrir</string>
+    <string name="action_save">Enregistrer</string>
     <string name="action_retry">Réessayer</string>
-    <string name="menu_server">Changer le serveur…</string>
+    <string name="action_clear_key">Effacer la clé</string>
+    <string name="menu_server">Clé Groq (optionnel)…</string>
     <string name="menu_reload">Recharger</string>
-    <string name="error_title">Serveur injoignable</string>
-    <string name="error_checklist">Checklist (écran blanc = souvent ça) :\n\n• Sur le PC : THOT_BIND=0.0.0.0 (pas seulement 127.0.0.1)\n• Même Wi‑Fi téléphone ↔ PC (ou tunnel https)\n• Port 8787 ouvert / firewall\n• URL = http://&lt;IP-LAN-du-PC&gt;:8787\n• Cleartext HTTP autorisé dans cette APK debug\n• Groq / données : côté serveur Rust, pas dans l’APK\n\nUtilisez « Changer le serveur… » pour corriger l’URL.</string>
-    <string name="load_error">Impossible de joindre le serveur Thot.</string>
-    <string name="url_required">Entrez l’URL du serveur (IP du PC + port 8787).</string>
-    <string name="no_server_yet">Aucun serveur configuré</string>
+    <string name="error_title">Démarrage Thot</string>
+    <string name="error_checklist_embedded">Mode embarqué : le serveur Rust tourne dans l’APK sur 127.0.0.1.\n\n• Pas besoin d’URL PC / cloud pour l’UI et SQLite\n• Internet requis pour Groq, Wiktionary/Wikipedia, TTS MS Edge\n• Sans clé Groq : réponses stub / démo limitées\n• Engrenage : coller une clé Groq (stockée seulement sur l’appareil)\n• Réessayer si le premier démarrage a échoué</string>
+    <string name="groq_key_title">Clé Groq (optionnel)</string>
+    <string name="groq_key_hint">gsk_…</string>
+    <string name="groq_key_message">Optionnel. Stockée uniquement dans les fichiers privés de l’app (pas dans le dépôt). Sans clé, Thot fonctionne en mode stub pour une partie des features. Ne partagez jamais votre clé.</string>
+    <string name="groq_saved_restart">Clé enregistrée — redémarrage du serveur local…</string>
+    <string name="groq_cleared">Clé effacée</string>
 </resources>
