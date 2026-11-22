@@ -411,15 +411,15 @@ fn stub_response(system: &str, user: &str) -> String {
         .to_string();
     }
 
-    // Live course notes cleanup
-    if blob.contains("clean live course notes")
+    // Live course notes — professor voice (not chatbot summary)
+    if blob.contains("professor pedagogical voice")
         || blob.contains("raw_transcript")
-        || blob.contains("live class notes transcribed as text")
+        || blob.contains("rewrite live lecture notes")
+        || blob.contains("live lecture transcript")
     {
         return json!({
-            "title": "[STUB] Notes nettoyées",
-            "summary": "Aperçu structuré du cours à partir du transcript texte (démo sans LLM distant).",
-            "cleaned_text": "## Points clés\n- Notion principale rappelée\n- Lien avec le PDF du cours\n\n## À retenir\n- Digressions retirées\n- Formulation clarifiée"
+            "title": "Thylakoïdes et réactions lumineuses",
+            "cleaned_text": "Les thylakoïdes, ce sont les membranes à l’intérieur des chloroplastes. C’est là que se déroulent les réactions dépendantes de la lumière.\n\nLa chlorophylle absorbe la lumière : sans elle, pas d’entrée d’énergie dans le système. Ensuite, le cycle de Calvin fixe le carbone dans le stroma — ce n’est pas la même étape que les réactions lumineuses, et il faut bien les distinguer pour l’examen."
         })
         .to_string();
     }

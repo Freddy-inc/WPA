@@ -972,12 +972,12 @@
           </div>
           <p class="meta" id="notePrivacy">Confidentialité : transcript texte uniquement — pas d’upload audio.</p>
           <div class="actions">
-            <button type="button" id="noteCleanBtn">Nettoyer avec l’IA</button>
+            <button type="button" id="noteCleanBtn">Clarifier (voix du cours)</button>
             <button type="button" class="ghost" id="noteDeleteBtn">Supprimer</button>
           </div>
           <div id="noteMsg"></div>
-          <label for="noteCleaned">Notes nettoyées</label>
-          <textarea id="noteCleaned" rows="8" placeholder="Après « Nettoyer avec l’IA » : reformulation structurée, hors digressions." readonly></textarea>
+          <label for="noteCleaned">Notes du cours</label>
+          <textarea id="noteCleaned" rows="8" placeholder="Après clarification : même voix pédagogique que le professeur, sans digressions." readonly></textarea>
         </div>
       </div>
     </section>
@@ -2985,7 +2985,7 @@
       el.innerHTML = notesCache.map((n) => {
         const preview = (n.raw_text || n.cleaned_text || "").trim().slice(0, 80);
         const badge = (n.cleaned_text || "").trim()
-          ? `<span class="remed-badge" style="background:#dceee6;color:#1a6b4a">Nettoyée</span>`
+          ? `<span class="remed-badge" style="background:#dceee6;color:#1a6b4a">Cours</span>`
           : `<span class="remed-badge">Brouillon</span>`;
         return `<button type="button" class="fiche-row note-open" data-id="${n.id}">
           <span class="preview">
@@ -3080,14 +3080,14 @@
       if (!editingNoteId) return;
       await saveNoteDraft();
       $("noteCleanBtn").disabled = true;
-      setMsg($("noteMsg"), "Nettoyage IA (Groq) — reformulation, hors digressions…", true);
+      setMsg($("noteMsg"), "Clarification en cours — voix du professeur, hors digressions…", true);
       try {
         const res = await api(`/api/notes/${editingNoteId}/clean`, { method: "POST" });
         const n = res.note;
         $("noteTitle").value = n.title || $("noteTitle").value;
         $("noteCleaned").value = n.cleaned_text || "";
         notesCache = notesCache.map((x) => (x.id === n.id ? n : x));
-        setMsg($("noteMsg"), "Notes nettoyées — toujours sans audio stocké.", true);
+        setMsg($("noteMsg"), "Notes clarifiées — texte seulement, sans audio.", true);
       } catch (e) {
         setMsg($("noteMsg"), e.message, false);
       } finally {

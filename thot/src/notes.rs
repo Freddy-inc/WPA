@@ -1,5 +1,6 @@
 //! Live course notes — text drafts from Web Speech; Groq cleans after class.
 //! Privacy invariant: only text is stored/processed. Never audio bytes.
+//! Cleaned output must keep the professor’s pedagogical voice — not chatbot tone.
 
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
@@ -13,10 +14,10 @@ use crate::pdf::chunk_text;
 pub struct CleanedNote {
     pub title: String,
     pub cleaned_text: String,
-    pub summary: String,
 }
 
-/// Reformulate raw live transcript: keep course-relevant, drop digressions.
+/// Reformulate raw live transcript in the lecture’s own pedagogical voice.
+/// Drop digressions only — never chatbot framing.
 pub async fn clean_note(db: &Db, llm: &LlmClient, note_id: i64) -> Result<NoteRow> {
     let note = db
         .get_note(note_id)
@@ -25,7 +26,7 @@ pub async fn clean_note(db: &Db, llm: &LlmClient, note_id: i64) -> Result<NoteRo
     let raw = note.raw_text.trim();
     if raw.chars().count() < 20 {
         return Err(anyhow!(
-            "Transcript trop court — dictez ou collez plus de texte avant de nettoyer"
+            "Transcript trop court — dictez ou collez plus de texte avant de clarifier"
         ));
     }
 
@@ -62,19 +63,46 @@ pub async fn clean_note(db: &Db, llm: &LlmClient, note_id: i64) -> Result<NoteRo
     } else {
         cleaned.title.trim().to_string()
     };
-    let body = if cleaned.summary.trim().is_empty() {
-        cleaned.cleaned_text
-    } else {
-        format!(
-            "## Résumé\n{}\n\n## Notes\n{}",
-            cleaned.summary.trim(),
-            cleaned.cleaned_text.trim()
-        )
-    };
+    let body = strip_ai_framing(cleaned.cleaned_text.trim());
+    if body.is_empty() {
+        return Err(anyhow!("clarification vide — réessayez"));
+    }
 
-    db.update_note(note_id, Some(&title), None, Some(body.trim()))
+    db.update_note(note_id, Some(&title), None, Some(&body))
         .await?
-        .ok_or_else(|| anyhow!("note disparue après nettoyage"))
+        .ok_or_else(|| anyhow!("note disparue après clarification"))
+}
+
+fn strip_ai_framing(text: &str) -> String {
+    let banned_starts = [
+        "voici un résumé",
+        "voici le résumé",
+        "en résumé",
+        "résumé :",
+        "résumé:",
+        "points clés",
+        "à retenir",
+        "digressions retirées",
+        "here is a summary",
+        "here's a summary",
+        "in summary",
+        "key takeaways",
+    ];
+    let mut lines: Vec<&str> = text.lines().collect();
+    while let Some(first) = lines.first() {
+        let t = first.trim().to_lowercase();
+        if t.is_empty()
+            || t == "## résumé"
+            || t == "## notes"
+            || t == "## summary"
+            || banned_starts.iter().any(|b| t.starts_with(b))
+        {
+            lines.remove(0);
+            continue;
+        }
+        break;
+    }
+    lines.join("\n").trim().to_string()
 }
 
 async fn generate_clean(
@@ -87,14 +115,20 @@ async fn generate_clean(
     l2: &str,
 ) -> Result<CleanedNote> {
     let system = format!(
-        "You clean live class notes transcribed as text (never audio). \
+        "You edit a live lecture transcript (text only — never audio) into clean course notes. \
          Student mother tongue L1={l1}; course language L2={l2}. \
-         Reformulate clearly in L1 (or bilingual L1/L2 terms when useful). \
-         Keep only course-relevant content about THIS course; drop digressions, filler, \
-         greetings, and off-topic chatter. Structure with short headings and bullets. \
-         Use the course PDF excerpt only to decide relevance — do not invent facts absent \
-         from the transcript or excerpt. \
-         Return JSON only: {{\"title\":\"...\",\"summary\":\"2-4 sentences\",\"cleaned_text\":\"markdown notes\"}}."
+         LANGUAGE: write the cleaned notes in the SAME language as the spoken lecture (raw_transcript). \
+         If the professor spoke French, output French — do not switch to English because the PDF excerpt is English. \
+         CRITICAL VOICE: write as if the professor explained the material again — same pedagogical style, \
+         pacing, emphasis, and wording habits as that lecture. Soften fillers (euh, bon…) and remove digressions only. \
+         Do NOT sound like a chatbot or study-assistant. Forbidden phrases and patterns: \
+         « Voici un résumé… », « En résumé », « Points clés », « À retenir », « Digressions retirées », \
+         « Key takeaways », « Good morning everyone » as a generic AI opener, meta talk about cleaning/AI, \
+         flashcard-style bullet dumps. Prefer continuous explanatory paragraphs \
+         (short subheadings OK only if the professor would section the board). \
+         Keep technical terms as the professor used them in class. \
+         Use the course PDF excerpt only to judge what is on-topic — invent nothing absent from transcript or excerpt. \
+         Return JSON only: {{\"title\":\"short course-note title\",\"cleaned_text\":\"professor-voice notes in markdown\"}}."
     );
     let user = json!({
         "course_title": course_title,
@@ -104,7 +138,8 @@ async fn generate_clean(
         "l1": l1,
         "l2": l2,
         "privacy": "text-only; no audio was uploaded",
-        "task": "clean live course notes after class"
+        "task": "rewrite live lecture notes in the professor pedagogical voice; drop digressions only",
+        "voice_rule": "must read like the lecturer, not like an AI summary"
     })
     .to_string();
 
@@ -115,12 +150,6 @@ async fn generate_clean(
         .unwrap_or(note_title)
         .trim()
         .to_string();
-    let summary = v
-        .get("summary")
-        .and_then(|s| s.as_str())
-        .unwrap_or("")
-        .trim()
-        .to_string();
     let cleaned_text = v
         .get("cleaned_text")
         .and_then(|s| s.as_str())
@@ -128,7 +157,7 @@ async fn generate_clean(
         .trim()
         .to_string();
     if cleaned_text.is_empty() {
-        return Err(anyhow!("nettoyage IA vide — réessayez"));
+        return Err(anyhow!("clarification vide — réessayez"));
     }
     Ok(CleanedNote {
         title: if title.is_empty() {
@@ -136,7 +165,6 @@ async fn generate_clean(
         } else {
             title
         },
-        summary,
         cleaned_text,
     })
 }
