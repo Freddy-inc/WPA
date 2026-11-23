@@ -918,10 +918,6 @@
         </div>
         <div id="globalLangMsg"></div>
       </section>
-      <div class="search-wrap">
-        <span class="lens" aria-hidden="true">⌕</span>
-        <input type="search" id="courseSearch" placeholder="Rechercher un cours" autocomplete="off" />
-      </div>
       <div class="create-row">
         <input type="text" id="newCourseTitle" placeholder="Nouveau cours — ex. Biologie L2" />
         <button type="button" id="createCourseBtn">Créer</button>
@@ -940,18 +936,18 @@
       <div class="hub-stack">
     <section id="import" class="hub-panel active">
       <h2>Documents</h2>
-      <p class="meta">Plusieurs PDFs dans ce cours. Glossaire, fiches et quiz agrègent les textes de ce cours uniquement.</p>
-      <label for="pdf">Ajouter un PDF (texte extractible)</label>
+      <p class="meta">PDF du cours (texte extractible). Un fichier = ajout immédiat.</p>
+      <label for="pdf">Ajouter un PDF</label>
       <input type="file" id="pdf" accept="application/pdf,.pdf" />
       <div class="actions">
-        <button type="button" id="importBtn">Ajouter au cours</button>
+        <button type="button" id="importBtn">Choisir un PDF</button>
       </div>
       <div id="importMsg"></div>
       <div id="docsList" class="fiche-list" style="margin-top:0.75rem"></div>
 
       <div class="notes-block" id="notesBlock">
         <h2>Notes de cours</h2>
-        <p class="meta">Dictée live via Web Speech (comme le micro du clavier) → <strong>texte seulement</strong>. Aucun fichier audio n’est envoyé ni conservé.</p>
+        <p class="meta">Dictée live → texte seulement. Aucun audio conservé.</p>
         <div class="actions">
           <button type="button" id="noteCreateBtn">Nouvelle note</button>
         </div>
@@ -991,45 +987,23 @@
           <button type="button" id="nextPage" aria-label="Page suivante">›</button>
         </div>
       </div>
-      <div class="viewer-hint">Sélectionnez un mot ou une <strong>phrase</strong> dans le PDF — Sens donne le sens L1 (phrase entière + mots), Copier, Fermer.</div>
-      <div class="vocab-legend" id="vocabLegend" hidden>
-        <span><span class="swatch review"></span>à revoir</span>
-        <span><span class="swatch known"></span>connu</span>
-        <span class="meta" id="vocabCounts" style="margin:0"></span>
-        <label style="display:inline-flex;align-items:center;gap:0.3rem;margin:0;color:var(--muted);font-size:0.8rem">
-          <input type="checkbox" id="vocabHighlightToggle" checked />
-          Surbrillance
-        </label>
-      </div>
+      <div class="viewer-hint">Sélectionnez un mot ou une <strong>phrase</strong> — Sens (L1), + Fiche, Connu / À revoir.</div>
       <div id="pdfScroll"></div>
-      <div class="captures-strip" id="capturesStrip">
-        <h3>Derniers capturés</h3>
-        <div class="captures-row" id="capturesRow">
-          <span class="capture-chip empty">Aucun capturé — utilisez + Fiche depuis Sens</span>
-        </div>
-      </div>
     </section>
 
-    <section id="fichesSection" class="hub-panel">
+    <section id="studyPanel" class="hub-panel">
+      <div id="fichesSection" class="hub-block">
       <h2>Mes fiches</h2>
       <p class="meta" id="fichesCountLabel">Aucune fiche pour l’instant.</p>
       <div class="actions">
         <button type="button" id="fichesBtn">Générer fiches</button>
-        <button type="button" class="secondary" id="reviseBtn" hidden>Réviser</button>
-        <button type="button" class="ghost" id="exportCsvBtn" title="Export CSV">Export CSV</button>
-        <button type="button" class="ghost" id="exportAnkiBtn" title="Export Anki (TSV)">Export Anki</button>
         <button type="button" class="ghost" id="fichesToPdf">Ouvrir le PDF</button>
       </div>
       <div id="fichesMsg"></div>
 
       <div id="fichesListView">
         <div id="fichesEmpty" class="empty-state" hidden>
-          <p><strong>Aucune fiche pour l’instant.</strong></p>
-          <p>Les fiches sont générées à partir du corpus de tous les PDFs du cours.</p>
-          <div class="actions">
-            <button type="button" id="emptyGenBtn">Générer fiches</button>
-            <button type="button" class="secondary" id="emptyPdfBtn">Ouvrir le PDF</button>
-          </div>
+          <p>Générez des fiches depuis le corpus PDF (bouton ci-dessus).</p>
         </div>
         <div id="fichesList" class="fiche-list"></div>
       </div>
@@ -1051,27 +1025,12 @@
         </div>
         <div id="ficheSaveMsg"></div>
       </div>
-
-      <div id="ficheReviseView" class="fiche-panel" hidden>
-        <div class="actions" style="margin-top:0">
-          <button type="button" class="ghost" id="reviseBack">← Fiches</button>
-          <button type="button" class="secondary" id="revisePrev">Préc.</button>
-          <button type="button" class="secondary" id="reviseNext">Suiv.</button>
-        </div>
-        <p class="meta" id="revisePos"></p>
-        <div class="revise-card" id="reviseCard" title="Toucher pour retourner">
-          <div class="side" id="reviseSide">Recto</div>
-          <div class="body" id="reviseBody"></div>
-        </div>
-        <p class="meta">Touchez la carte pour basculer recto / verso.</p>
       </div>
-    </section>
 
-    <section id="generate" class="hub-panel">
+      <div id="generate" class="hub-block">
       <h2>Quiz</h2>
       <div id="quizLaunch">
-        <p>Questions tirées du corpus de tous les PDFs du cours.</p>
-        <p class="meta">Ordre aléatoire à chaque tentative · couverture : ensemble des documents.</p>
+        <p class="meta">Questions tirées du corpus PDF · ordre aléatoire.</p>
         <p class="meta" id="quizLastScore">Aucune tentative pour l’instant.</p>
         <div class="actions">
           <button type="button" id="quizStartBtn">Commencer</button>
@@ -1081,93 +1040,32 @@
       </div>
       <div id="quizBlocked" class="empty-state" hidden>
         <p><strong>Quiz indisponible</strong></p>
-        <p>Matériel insuffisant pour générer des questions.</p>
+        <p>Matériel insuffisant — importez un PDF ou générez des fiches.</p>
         <div class="actions">
           <button type="button" id="quizBlockedPdf">Continuer la lecture</button>
           <button type="button" class="secondary" id="quizBlockedFiches">Fiches</button>
         </div>
       </div>
       <div id="quizOut"></div>
+      </div>
     </section>
 
-    <section id="suitePanel" class="hub-panel">
-      <div class="hub-block" id="langs">
-        <h2>Langues du cours</h2>
-        <p class="meta" id="courseLangDefault">Défaut app : —</p>
-        <label style="display:flex;align-items:center;gap:0.45rem;margin:0.55rem 0;color:var(--ink)">
-          <input type="checkbox" id="courseLangOverride" />
-          Surcharger L1/L2 pour ce cours
-        </label>
-        <div class="row" id="courseLangRow">
-          <div>
-            <label for="courseL1">L1</label>
-            <select id="courseL1" disabled>
-              <option value="fr" selected>Français</option>
-              <option value="en">English</option>
-              <option value="es">Español</option>
-              <option value="de">Deutsch</option>
-            </select>
-          </div>
-          <div>
-            <label for="courseL2">L2</label>
-            <select id="courseL2" disabled>
-              <option value="en" selected>English</option>
-              <option value="fr">Français</option>
-              <option value="es">Español</option>
-              <option value="de">Deutsch</option>
-            </select>
-          </div>
-        </div>
-        <div class="actions">
-          <button type="button" id="saveCourseLangs">Enregistrer</button>
-        </div>
-        <div id="langMsg"></div>
+    <section id="podcastSection" class="hub-panel">
+      <h2>Podcast</h2>
+      <p class="meta">Aperçu deux voix du corpus, ou remédiation des notions manquées. Texte → TTS. Pas de micro.</p>
+      <div class="actions">
+        <button type="button" id="podcastGenBtn">Générer un aperçu</button>
+        <button type="button" class="secondary" id="podcastMissesBtn" hidden>Podcast notions manquées</button>
+        <button type="button" class="ghost" id="podcastStopBtn" hidden>Stop</button>
       </div>
-
-      <div class="hub-block" id="podcastSection">
-        <h2>Podcast</h2>
-        <p class="meta">Aperçu audio à deux voix du corpus PDF, ou chapitres de remédiation liés aux notions manquées. Groq · TTS Rust (MS Edge) / Web Speech. Aucun micro.</p>
-        <div class="actions">
-          <button type="button" id="podcastGenBtn">Générer un aperçu</button>
-          <button type="button" class="secondary" id="podcastMissesBtn" hidden>Podcast notions manquées</button>
-          <button type="button" class="ghost" id="podcastStopBtn" hidden>Stop</button>
-        </div>
-        <div id="podcastMsg"></div>
-        <div id="podcastPlayer" class="fiche-panel" hidden style="margin-top:0.75rem">
-          <p class="meta" id="podcastNowTitle"></p>
-          <audio id="podcastAudio" controls style="width:100%;margin:0.4rem 0"></audio>
-          <div id="podcastChapters" class="fiche-list" style="margin:0.45rem 0"></div>
-          <div id="podcastScriptPreview" class="meta" style="max-height:9rem;overflow:auto;white-space:pre-wrap"></div>
-        </div>
-        <div id="podcastList" class="fiche-list" style="margin-top:0.75rem"></div>
+      <div id="podcastMsg"></div>
+      <div id="podcastPlayer" class="fiche-panel" hidden style="margin-top:0.75rem">
+        <p class="meta" id="podcastNowTitle"></p>
+        <audio id="podcastAudio" controls style="width:100%;margin:0.4rem 0"></audio>
+        <div id="podcastChapters" class="fiche-list" style="margin:0.45rem 0"></div>
+        <div id="podcastScriptPreview" class="meta" style="max-height:9rem;overflow:auto;white-space:pre-wrap"></div>
       </div>
-
-      <div class="hub-block" id="progression">
-        <h2>Progression</h2>
-        <div class="prog-block">
-          <h3>Lecture</h3>
-          <div class="value" id="progPages">Pages ouvertes : 0 / 0</div>
-          <p class="meta">Par document + total cours. Chaque page vue compte une fois.</p>
-          <div id="progByDoc" class="meta" style="margin-top:0.45rem"></div>
-        </div>
-        <div class="prog-block">
-          <h3>Fiches</h3>
-          <div class="value" id="progFiches">0 disponibles</div>
-        </div>
-        <div class="prog-block">
-          <h3>Quiz</h3>
-          <div class="value" id="progQuiz">Aucune tentative</div>
-        </div>
-        <div class="prog-block">
-          <h3>Ensuite ?</h3>
-          <div class="actions" style="margin-top:0.35rem">
-            <button type="button" id="ctaReread">Relire le PDF</button>
-            <button type="button" class="secondary" id="ctaFiches">Réviser les fiches</button>
-            <button type="button" class="secondary" id="ctaQuiz">Rejouer le quiz</button>
-          </div>
-        </div>
-        <div id="progMsg" class="meta"></div>
-      </div>
+      <div id="podcastList" class="fiche-list" style="margin-top:0.75rem"></div>
     </section>
       </div><!-- .hub-stack -->
     </div><!-- #viewHub -->
@@ -1177,9 +1075,8 @@
   <nav class="tab-bar" id="hubTabs" aria-label="Navigation du cours">
     <button type="button" class="hub-tab active" data-target="import"><span class="tab-ico" aria-hidden="true">▣</span>Docs</button>
     <button type="button" class="hub-tab" data-target="readerSection"><span class="tab-ico" aria-hidden="true">☰</span>Lecture</button>
-    <button type="button" class="hub-tab" data-target="fichesSection"><span class="tab-ico" aria-hidden="true">◇</span>Fiches</button>
-    <button type="button" class="hub-tab" data-target="generate"><span class="tab-ico" aria-hidden="true">✓</span>Quiz</button>
-    <button type="button" class="hub-tab" data-target="suitePanel"><span class="tab-ico" aria-hidden="true">···</span>Suite</button>
+    <button type="button" class="hub-tab" data-target="studyPanel"><span class="tab-ico" aria-hidden="true">◇</span>Étudier</button>
+    <button type="button" class="hub-tab" data-target="podcastSection"><span class="tab-ico" aria-hidden="true">♪</span>Podcast</button>
   </nav>
   </div><!-- .phone -->
 
@@ -1294,12 +1191,15 @@
     }
 
     function setHubTab(targetId) {
-      const panels = ["import", "readerSection", "fichesSection", "generate", "suitePanel"];
-      const resolved = panels.includes(targetId)
-        ? targetId
-        : targetId === "podcastSection" || targetId === "progression" || targetId === "langs"
-          ? "suitePanel"
-          : "import";
+      const alias = {
+        fichesSection: "studyPanel",
+        generate: "studyPanel",
+        suitePanel: "podcastSection",
+        langs: "import",
+        progression: "studyPanel",
+      };
+      const panels = ["import", "readerSection", "studyPanel", "podcastSection"];
+      const resolved = panels.includes(targetId) ? targetId : (alias[targetId] || "import");
       document.querySelectorAll(".hub-tab").forEach((t) => {
         t.classList.toggle("active", t.dataset.target === resolved);
       });
@@ -1370,24 +1270,14 @@
 
     function renderCourses(courses) {
       const el = $("coursesList");
-      const q = ($("courseSearch").value || "").trim().toLowerCase();
-      const filtered = !q
-        ? courses
-        : courses.filter((c) => {
-            const hay = `${c.title || ""} ${c.subtitle || ""} ${c.l1 || ""} ${c.l2 || ""}`.toLowerCase();
-            return hay.includes(q);
-          });
-      if (!filtered.length) {
-        el.innerHTML = courses.length
-          ? `<div class="empty-state"><p>Aucun résultat.</p></div>`
-          : `<div class="empty-state" id="emptyCoursesState">
+      if (!courses.length) {
+        el.innerHTML = `<div class="empty-state" id="emptyCoursesState">
               <p><strong>Aucun support</strong></p>
-              <p>Créez un cours puis importez un PDF pour commencer.</p>
-              <p class="meta">Si l’import échoue (PDF scanné / trop lourd) : message clair + autre fichier.</p>
+              <p>Créez un cours puis importez un PDF.</p>
             </div>`;
         return;
       }
-      el.innerHTML = filtered.map((c) => {
+      el.innerHTML = courses.map((c) => {
         const sub = c.subtitle || ([c.l1, c.l2].filter(Boolean).join(" ← ") || "Langues non définies");
         const letter = (c.title || "?").trim().charAt(0).toUpperCase() || "?";
         return `<button type="button" class="course-card" data-id="${c.id}">
@@ -1419,29 +1309,9 @@
       renderCourses(coursesCache);
     };
 
-    $("courseSearch").oninput = () => renderCourses(coursesCache);
-
-    function syncCourseLangUi(active, langs) {
-      const g1 = langs?.global_l1 || $("globalL1").value;
-      const g2 = langs?.global_l2 || $("globalL2").value;
-      $("courseLangDefault").textContent = g1 && g2
-        ? `Défaut app : ${g1} ← ${g2}`
-        : "Défaut app : non défini — enregistrez les langues sur l’accueil";
-      const overridden = !!(active && active.languages_overridden);
-      $("courseLangOverride").checked = overridden;
-      $("courseL1").disabled = !overridden;
-      $("courseL2").disabled = !overridden;
-      if (overridden && active?.l1) $("courseL1").value = active.l1;
-      else $("courseL1").value = g1 || "fr";
-      if (overridden && active?.l2) $("courseL2").value = active.l2;
-      else $("courseL2").value = g2 || "en";
+    function syncCourseLangUi(_active, _langs) {
+      /* Course override UI removed (Musk pass) — global L1/L2 only. */
     }
-
-    $("courseLangOverride").onchange = () => {
-      const on = $("courseLangOverride").checked;
-      $("courseL1").disabled = !on;
-      $("courseL2").disabled = !on;
-    };
 
     $("saveGlobalLangs").onclick = async () => {
       try {
@@ -1518,94 +1388,88 @@
       }
     }
 
-    function renderProgression(p) {
-      if (!p) return;
-      const total = p.total_pages || 0;
-      const opened = p.pages_opened || 0;
-      const nDocs = p.docs_count || (p.by_doc || []).length || 0;
-      const cid = p.course_id != null ? ` · cours #${p.course_id}` : "";
-      $("progPages").textContent = `Pages ouvertes : ${opened} / ${total || "—"} · ${nDocs} doc${nDocs === 1 ? "" : "s"}${cid}`;
-      const by = $("progByDoc");
-      if (by) {
-        if ((p.by_doc || []).length) {
-          by.innerHTML = p.by_doc.map((d) =>
-            `${escapeHtml(d.filename)} : ${d.pages_opened} / ${d.total_pages || "—"}${d.active ? " (actif)" : ""}`
-          ).join("<br>");
-        } else {
-          by.textContent = "";
-        }
-      }
-      $("progFiches").textContent = `${p.fiches_count || 0} disponibles (corpus tous docs)`;
-      if ((p.quiz_attempts || 0) === 0) {
-        $("progQuiz").textContent = "Aucune tentative";
-      } else {
-        const score = (p.last_score != null && p.last_total != null)
-          ? `Dernier score : ${p.last_score}/${p.last_total}`
-          : "Dernier score : —";
-        $("progQuiz").textContent = `Tentatives : ${p.quiz_attempts} · ${score}`;
-      }
+    function renderProgression(_p) {
+      /* Progression UI removed (Musk pass). */
     }
 
     async function refreshProgression() {
-      try {
-        const p = await api("/api/progression");
-        renderProgression(p);
-      } catch (_) { /* ignore */ }
+      /* silent */
     }
 
-    $("saveCourseLangs").onclick = async () => {
-      if (!activeCourseId) return setMsg($("langMsg"), "Aucun cours actif", false);
-      try {
-        let body;
-        if ($("courseLangOverride").checked) {
-          body = { l1: $("courseL1").value, l2: $("courseL2").value };
-        } else {
-          body = { clear: true };
-        }
-        const data = await api(`/api/courses/${activeCourseId}/languages`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        const c = data.course;
-        setMsg(
-          $("langMsg"),
-          c?.languages_overridden
-            ? `Surcharge : ${c.l1_effective} ← ${c.l2_effective}`
-            : `Défaut app utilisé (${c?.l1_effective || "?"} ← ${c?.l2_effective || "?"})`,
-          true
-        );
-        await refreshStatus();
-      } catch (e) {
-        setMsg($("langMsg"), e.message, false);
-      }
-    };
-
-    $("importBtn").onclick = async () => {
-      const file = $("pdf").files[0];
+    async function importPdfFile(file) {
       if (!file) return setMsg($("importMsg"), "Choisissez un PDF", false);
       const fd = new FormData();
       fd.append("file", file);
       $("importBtn").disabled = true;
+      setMsg($("importMsg"), "Import en cours…", true);
       try {
         const data = await api("/api/import", { method: "POST", body: fd });
         const n = (data.documents || []).length;
         setMsg(
           $("importMsg"),
-          `Ajouté — ${data.filename} (${data.char_count} car.) · ${n} doc${n === 1 ? "" : "s"} dans le cours`,
+          `Ajouté — ${data.filename} (${data.char_count} car.) · ${n} doc${n === 1 ? "" : "s"}`,
           true
         );
         activeDocId = data.document?.id || null;
         $("pdfTitle").textContent = data.filename;
         renderDocuments(data.documents || [], data.document);
         await openPdf(data.pdf_url || "/api/course/pdf");
-        $("pdf").value = "";
+        if ($("pdf")) $("pdf").value = "";
       } catch (e) {
         setMsg($("importMsg"), e.message, false);
       } finally {
         $("importBtn").disabled = false;
       }
+    }
+
+    async function refreshAfterNativeImport() {
+      setMsg($("importMsg"), "PDF reçu — actualisation…", true);
+      try {
+        await refreshStatus();
+        const docs = await api("/api/documents");
+        const active = (docs.documents || []).find((d) => d.active) || (docs.documents || [])[0];
+        if (active) {
+          activeDocId = active.id;
+          $("pdfTitle").textContent = active.filename || "Cours";
+          renderDocuments(docs.documents || [], active);
+          await openPdf(active.pdf_url || `/api/documents/${active.id}/pdf`);
+          setMsg($("importMsg"), `Ajouté — ${active.filename}`, true);
+        } else {
+          setMsg($("importMsg"), "Import OK — ouvrez le document.", true);
+        }
+      } catch (e) {
+        setMsg($("importMsg"), e.message, false);
+      } finally {
+        $("importBtn").disabled = false;
+      }
+    }
+
+    window.__thotPdfImported = () => refreshAfterNativeImport();
+    window.__thotPdfImportError = (msg) => {
+      $("importBtn").disabled = false;
+      setMsg($("importMsg"), msg || "Échec import PDF", false);
     };
+
+    $("importBtn").onclick = async () => {
+      // Android: native OpenDocument → multipart to local axum (reliable)
+      if (window.ThotAndroid && typeof ThotAndroid.pickAndUploadPdf === "function") {
+        $("importBtn").disabled = true;
+        setMsg($("importMsg"), "Sélecteur de fichiers…", true);
+        try { ThotAndroid.pickAndUploadPdf(); } catch (e) {
+          $("importBtn").disabled = false;
+          setMsg($("importMsg"), e.message || "Sélecteur indisponible", false);
+        }
+        return;
+      }
+      const file = $("pdf")?.files?.[0];
+      if (file) return importPdfFile(file);
+      $("pdf")?.click();
+    };
+
+    $("pdf").addEventListener("change", () => {
+      const file = $("pdf").files?.[0];
+      if (file) importPdfFile(file);
+    });
 
     async function openPdf(url) {
       hideMenu();
@@ -1830,19 +1694,6 @@
       try {
         const data = await api("/api/vocab-status");
         vocabStatus = data.terms || {};
-        const legend = $("vocabLegend");
-        const counts = $("vocabCounts");
-        const nR = data.review_count || 0;
-        const nK = data.known_count || 0;
-        const toggle = $("vocabHighlightToggle");
-        if (toggle) toggle.checked = vocabHighlightOn;
-        if (nR + nK > 0 || Object.keys(vocabStatus).length) {
-          legend.hidden = false;
-          counts.textContent = `${nR} à revoir · ${nK} connus`;
-        } else {
-          legend.hidden = true;
-          counts.textContent = "";
-        }
       } catch (_) {
         vocabStatus = {};
       }
@@ -1910,40 +1761,16 @@
         .trim();
     }
 
-    function renderRecentCaptures(fiches) {
-      const row = $("capturesRow");
-      if (!fiches || !fiches.length) {
-        row.innerHTML = `<span class="capture-chip empty">Aucun capturé — utilisez + Fiche depuis Sens</span>`;
-        return;
-      }
-      row.innerHTML = fiches.map((f) => {
-        const label = ficheChipLabel(f.front);
-        return `<button type="button" class="capture-chip" data-id="${f.id}" title="${escapeHtml(label)}">${escapeHtml(label)}</button>`;
-      }).join("");
-      row.querySelectorAll(".capture-chip[data-id]").forEach((btn) => {
-        btn.onclick = () => {
-          setHubTab("fichesSection");
-          openFicheEditor(Number(btn.dataset.id));
-        };
-      });
+    function renderRecentCaptures(_fiches) {
+      /* captures strip removed */
     }
 
     async function loadRecentCaptures() {
-      try {
-        const data = await api("/api/fiches/recent");
-        renderRecentCaptures(data.fiches || []);
-      } catch (_) {
-        renderRecentCaptures([]);
-      }
+      /* strip removed */
     }
 
-    function downloadExport(format) {
-      const a = document.createElement("a");
-      a.href = `/api/fiches/export?format=${encodeURIComponent(format)}`;
-      a.download = format === "anki" ? "thot-fiches-anki.txt" : "thot-fiches.csv";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
+    function downloadExport(_format) {
+      /* export removed */
     }
 
     /* ---- Selection menu ---- */
@@ -2161,7 +1988,6 @@
     function showFichesList() {
       $("fichesListView").hidden = false;
       $("ficheEditView").hidden = true;
-      $("ficheReviseView").hidden = true;
       editingFicheId = null;
     }
 
@@ -2172,7 +1998,6 @@
       $("fichesCountLabel").textContent = n
         ? `${n} fiche${n > 1 ? "s" : ""} · générées depuis le cours`
         : "Aucune fiche pour l’instant.";
-      $("reviseBtn").hidden = n === 0;
       if (!n) {
         empty.hidden = false;
         list.innerHTML = "";
@@ -2255,7 +2080,6 @@
         }
         setMsg($("ficheSaveMsg"), "", true);
         $("fichesListView").hidden = true;
-        $("ficheReviseView").hidden = true;
         $("ficheEditView").hidden = false;
         $("ficheEditView").scrollIntoView({ behavior: "smooth", block: "nearest" });
       } catch (e) {
@@ -2293,47 +2117,6 @@
       }
     };
 
-    function openRevise() {
-      if (!fichesCache.length) return;
-      reviseIndex = 0;
-      reviseFlipped = false;
-      $("fichesListView").hidden = true;
-      $("ficheEditView").hidden = true;
-      $("ficheReviseView").hidden = false;
-      paintReviseCard();
-      $("ficheReviseView").scrollIntoView({ behavior: "smooth", block: "nearest" });
-    }
-
-    function paintReviseCard() {
-      const f = fichesCache[reviseIndex];
-      if (!f) return;
-      $("revisePos").textContent = `Fiche ${reviseIndex + 1} / ${fichesCache.length}`;
-      $("reviseSide").textContent = reviseFlipped ? "Verso" : "Recto";
-      $("reviseBody").textContent = reviseFlipped ? f.back : f.front;
-    }
-
-    $("reviseCard").onclick = () => {
-      reviseFlipped = !reviseFlipped;
-      paintReviseCard();
-    };
-    $("reviseBack").onclick = () => {
-      showFichesList();
-      renderFichesList();
-    };
-    $("revisePrev").onclick = () => {
-      if (reviseIndex <= 0) return;
-      reviseIndex -= 1;
-      reviseFlipped = false;
-      paintReviseCard();
-    };
-    $("reviseNext").onclick = () => {
-      if (reviseIndex >= fichesCache.length - 1) return;
-      reviseIndex += 1;
-      reviseFlipped = false;
-      paintReviseCard();
-    };
-    $("reviseBtn").onclick = openRevise;
-
     function scrollToPdf() {
       if (pdfDoc) setHubTab("readerSection");
       else {
@@ -2342,8 +2125,7 @@
       }
     }
     $("fichesToPdf").onclick = scrollToPdf;
-    $("emptyPdfBtn").onclick = scrollToPdf;
-
+    
     async function generateFiches() {
       if (fichesCache.length) {
         const ok = window.confirm(
@@ -2352,7 +2134,6 @@
         if (!ok) return;
       }
       $("fichesBtn").disabled = true;
-      $("emptyGenBtn").disabled = true;
       setMsg($("fichesMsg"), "Génération des fiches…", true);
       showFichesList();
       try {
@@ -2373,7 +2154,6 @@
         setMsg($("fichesMsg"), e.message, false);
       } finally {
         $("fichesBtn").disabled = false;
-        $("emptyGenBtn").disabled = false;
       }
     }
 
@@ -2679,8 +2459,8 @@
       if (missPodBtn) {
         missPodBtn.onclick = () => generateMissesPodcast();
       }
-      $("quizToFiches").onclick = () => setHubTab("fichesSection");
-      $("quizToProg").onclick = () => setHubTab("suitePanel");
+      $("quizToFiches").onclick = () => setHubTab("studyPanel");
+      if ($("quizToProg")) $("quizToProg").onclick = () => setHubTab("podcastSection");
       $("quizToPdf").onclick = () => {
         const src = lastMissSources[0];
         if (src) jumpToSource(src);
@@ -2861,10 +2641,10 @@
     async function generateMissesPodcast() {
       if (!lastMisses.length && !lastMissNotions.length) {
         setMsg($("podcastMsg"), "Passez d’abord un quiz avec des erreurs.", false);
-        setHubTab("suitePanel");
+        setHubTab("podcastSection");
         return;
       }
-      setHubTab("suitePanel");
+      setHubTab("podcastSection");
       setMsg($("podcastMsg"), "Podcast remédiation (notions manquées + pages PDF)…", true);
       if ($("podcastMissesBtn")) $("podcastMissesBtn").disabled = true;
       const quizBtn = $("quizMissesPodcastBtn");
@@ -2917,48 +2697,67 @@
       if ($("noteMicStatus")) $("noteMicStatus").hidden = true;
     }
 
+    let noteLastFinal = "";
+
     function startNoteMic() {
       const Ctor = speechRecognitionCtor();
+      const hasNative = !!(window.ThotAndroid && ThotAndroid.hasNativeSpeech && ThotAndroid.hasNativeSpeech());
+      if (!Ctor && !hasNative) {
+        setMsg($("noteMsg"), "Dictée indisponible — collez le texte à la main.", false);
+        return;
+      }
       if (!Ctor) {
-        setMsg($("noteMsg"), "Web Speech indisponible dans ce navigateur — collez le texte à la main.", false);
+        setMsg($("noteMsg"), "Pont micro pas prêt — réessayez dans une seconde.", false);
         return;
       }
       stopNoteMic();
+      noteLastFinal = "";
       noteBaseTranscript = ($("noteRaw").value || "").trim();
       if (noteBaseTranscript && !noteBaseTranscript.endsWith("\n")) {
         noteBaseTranscript += "\n";
       }
       const rec = new Ctor();
       noteRecognition = rec;
-      const l1 = ($("courseL1")?.disabled === false && $("courseLangOverride")?.checked)
-        ? ($("courseL1").value || "fr")
-        : ($("globalL1")?.value || "fr");
-      rec.lang = ({ fr: "fr-FR", en: "en-US", es: "es-ES", de: "de-DE" })[l1] || "fr-FR";
+      // Professor speaks L2 (course language)
+      const l2 = ($("globalL2")?.value || "en");
+      rec.lang = ({ fr: "fr-FR", en: "en-US", es: "es-ES", de: "de-DE" })[l2] || "en-US";
       rec.continuous = true;
       rec.interimResults = true;
       rec.onresult = (ev) => {
         let interim = "";
         let finalChunk = "";
         for (let i = ev.resultIndex; i < ev.results.length; i++) {
-          const t = ev.results[i][0].transcript;
+          const t = (ev.results[i][0] && ev.results[i][0].transcript) || "";
           if (ev.results[i].isFinal) finalChunk += t;
           else interim += t;
         }
         if (finalChunk) {
-          noteBaseTranscript += finalChunk.trim() + " ";
+          const cleaned = finalChunk.trim();
+          // Dedup OEM repeats of the same final chunk
+          if (cleaned && cleaned !== noteLastFinal) {
+            noteBaseTranscript += cleaned + " ";
+            noteLastFinal = cleaned;
+          }
         }
         $("noteRaw").value = (noteBaseTranscript + interim).trimStart();
       };
       rec.onerror = (ev) => {
-        if (ev.error === "not-allowed") {
+        const err = ev.error || "";
+        const msg = ev.message || err;
+        if (err === "not-allowed") {
           setMsg($("noteMsg"), "Micro refusé — autorisez le micro ou collez le texte.", false);
-        } else if (ev.error !== "aborted" && ev.error !== "no-speech") {
-          setMsg($("noteMsg"), `Micro : ${ev.error}`, false);
+          stopNoteMic();
+        } else if (err !== "aborted" && err !== "no-speech") {
+          setMsg($("noteMsg"), `Micro : ${msg}`, false);
+          // Keep listening on soft Android network/chunk errors unless hard deny
+          if (err === "network" && /indisponible|refusé|bridge/i.test(String(msg))) {
+            stopNoteMic();
+          }
         }
-        stopNoteMic();
       };
       rec.onend = () => {
-        if (noteListening) {
+        // Native Android bridge restarts itself; only re-arm browser Web Speech
+        if (noteListening && !(window.__thotAndroidSpeech)) {
           try { rec.start(); } catch (_) { stopNoteMic(); }
         }
       };
@@ -3120,16 +2919,7 @@
     };
 
     $("fichesBtn").onclick = () => generateFiches();
-    $("emptyGenBtn").onclick = () => generateFiches();
-    $("exportCsvBtn").onclick = () => downloadExport("csv");
-    $("exportAnkiBtn").onclick = () => downloadExport("anki");
-    $("vocabHighlightToggle").onchange = () => {
-      vocabHighlightOn = !!$("vocabHighlightToggle").checked;
-      localStorage.setItem("thot_vocab_hl", vocabHighlightOn ? "1" : "0");
-      const layer = document.querySelector("#pdfScroll .textLayer");
-      if (layer) applyVocabHighlights(layer);
-    };
-    $("ficheMarkReview").onclick = async () => {
+        $("ficheMarkReview").onclick = async () => {
       const term = ($("ficheFront").value || "").trim();
       if (!term) return;
       try {
@@ -3152,30 +2942,10 @@
     $("quizStartBtn").onclick = () => beginQuizFlow();
     $("quizCancelBtn").onclick = () => {
       showQuizLaunch();
-      setHubTab("suitePanel");
+      setHubTab("studyPanel");
     };
     $("quizBlockedPdf").onclick = scrollToPdf;
-    $("quizBlockedFiches").onclick = () => setHubTab("fichesSection");
-
-    $("ctaReread").onclick = () => {
-      if (pdfDoc) setHubTab("readerSection");
-      else {
-        setHubTab("import");
-        $("progMsg").textContent = "Importez un PDF pour lire.";
-      }
-    };
-    $("ctaFiches").onclick = async () => {
-      setHubTab("fichesSection");
-      await loadFichesList();
-      showFichesList();
-      if (fichesCache.length) openRevise();
-      else $("progMsg").textContent = "Aucune fiche — générez-en depuis le cours.";
-    };
-    $("ctaQuiz").onclick = async () => {
-      setHubTab("generate");
-      showQuizLaunch();
-      await refreshQuizLaunch();
-    };
+    $("quizBlockedFiches").onclick = () => setHubTab("studyPanel");
 
     // Expose for demos / agent screenshots (no secrets)
     window.jumpToSource = jumpToSource;

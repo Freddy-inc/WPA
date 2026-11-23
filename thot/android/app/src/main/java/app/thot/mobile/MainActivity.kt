@@ -33,12 +33,16 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import app.thot.mobile.databinding.ActivityMainBinding
+import java.io.DataOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.Locale
 import java.util.concurrent.Executors
 
 /**
  * Embedded mode: JNI axum on 127.0.0.1 + WebView.
- * Critical WebView bridges: file chooser (PDF import) + native speech (notes).
+ * PDF import: native OpenDocument → multipart POST to local axum (bypasses flaky WebView file input).
+ * Notes mic: Android SpeechRecognizer bridge (bypasses missing Web Speech in WebView).
  */
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
@@ -50,7 +54,9 @@ class MainActivity : AppCompatActivity() {
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
     private var speechRecognizer: SpeechRecognizer? = null
     private var dictationActive = false
+    private var dictationLang: String = "en-US"
     private var pendingWebPermission: PermissionRequest? = null
+    private var restartSpeechRunnable: Runnable? = null
 
     private val micPermission = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -65,6 +71,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** Fallback for plain &lt;input type=file&gt; (desktop-parity / older paths). */
     private val fileChooserLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -83,7 +90,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
         data?.data?.let { uris.add(it) }
-        // Persist read permission for content:// during upload
         uris.forEach { uri ->
             try {
                 contentResolver.takePersistableUriPermission(
@@ -91,10 +97,27 @@ class MainActivity : AppCompatActivity() {
                     Intent.FLAG_GRANT_READ_URI_PERMISSION
                 )
             } catch (_: SecurityException) {
-                // Not all providers support persistable grants — transient grant from chooser is enough.
             }
         }
         cb.onReceiveValue(if (uris.isEmpty()) null else uris.toTypedArray())
+    }
+
+    /** Primary APK path: OpenDocument → upload bytes to embedded axum. */
+    private val openPdfLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) {
+            notifyJsPdfError("Sélection annulée")
+            return@registerForActivityResult
+        }
+        try {
+            contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        } catch (_: SecurityException) {
+        }
+        uploadPdfUri(uri)
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -115,14 +138,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun ensureMicPermission() {
-        val need = mutableListOf<String>()
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED
         ) {
-            need.add(Manifest.permission.RECORD_AUDIO)
-        }
-        if (need.isNotEmpty()) {
-            micPermission.launch(need.toTypedArray())
+            micPermission.launch(arrayOf(Manifest.permission.RECORD_AUDIO))
         }
     }
 
@@ -137,7 +156,6 @@ class MainActivity : AppCompatActivity() {
         settings.mediaPlaybackRequiresUserGesture = false
         settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         settings.cacheMode = WebSettings.LOAD_DEFAULT
-        // Required for <input type=file> / blob reads after chooser
         settings.allowFileAccess = true
         settings.allowContentAccess = true
         @Suppress("DEPRECATION")
@@ -164,7 +182,6 @@ class MainActivity : AppCompatActivity() {
                     ensureMicPermission()
                     return
                 }
-                // Grant on UI thread
                 main.post { request.grant(request.resources) }
             }
 
@@ -173,26 +190,16 @@ class MainActivity : AppCompatActivity() {
                 filePathCallback: ValueCallback<Array<Uri>>?,
                 fileChooserParams: FileChooserParams?
             ): Boolean {
-                // Cancel any previous callback
                 this@MainActivity.filePathCallback?.onReceiveValue(null)
                 this@MainActivity.filePathCallback = filePathCallback
 
-                val intent = try {
-                    fileChooserParams?.createIntent()
-                } catch (_: Exception) {
-                    null
-                } ?: Intent(Intent.ACTION_GET_CONTENT).apply {
+                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                     addCategory(Intent.CATEGORY_OPENABLE)
                     type = "application/pdf"
                     putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/pdf", "application/*"))
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
                 }
-
-                // Prefer PDF but allow */* fallback so OEM pickers work
-                if (intent.type.isNullOrBlank()) {
-                    intent.type = "*/*"
-                }
-                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
 
                 return try {
                     fileChooserLauncher.launch(
@@ -214,9 +221,9 @@ class MainActivity : AppCompatActivity() {
 
         web.webViewClient = object : WebViewClient() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
-                // Don't flip loading overlay on every in-app navigation — only first load
                 if (binding.errorPanel.visibility == View.VISIBLE) return
                 binding.titleView.text = "Thot"
+                injectAndroidSpeechBridge()
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
@@ -240,7 +247,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** Replace flaky WebView Web Speech with Android SpeechRecognizer. */
+    /** Replace missing/flaky WebView Web Speech with Android SpeechRecognizer. */
     private fun injectAndroidSpeechBridge() {
         val js = """
             (function(){
@@ -249,7 +256,7 @@ class MainActivity : AppCompatActivity() {
               function NativeRec(){
                 this.continuous = true;
                 this.interimResults = true;
-                this.lang = 'fr-FR';
+                this.lang = 'en-US';
                 this.onresult = null;
                 this.onerror = null;
                 this.onend = null;
@@ -261,11 +268,10 @@ class MainActivity : AppCompatActivity() {
                   if (this.onerror) this.onerror({ error: 'not-allowed', message: 'bridge missing' });
                   return;
                 }
-                ThotAndroid.startDictation(this.lang || 'fr-FR');
+                ThotAndroid.startDictation(this.lang || 'en-US');
               };
               NativeRec.prototype.stop = function(){
                 if (window.ThotAndroid && ThotAndroid.stopDictation) ThotAndroid.stopDictation();
-                if (this.onend) { try { this.onend(); } catch (e) {} }
               };
               NativeRec.prototype.abort = function(){ this.stop(); };
               window.SpeechRecognition = NativeRec;
@@ -305,6 +311,105 @@ class MainActivity : AppCompatActivity() {
 
         @JavascriptInterface
         fun hasNativeSpeech(): Boolean = SpeechRecognizer.isRecognitionAvailable(this@MainActivity)
+
+        @JavascriptInterface
+        fun pickAndUploadPdf() {
+            main.post {
+                try {
+                    openPdfLauncher.launch(arrayOf("application/pdf", "*/*"))
+                } catch (e: Exception) {
+                    notifyJsPdfError(e.message ?: "Sélecteur indisponible")
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun hasNativePicker(): Boolean = true
+    }
+
+    private fun uploadPdfUri(uri: Uri) {
+        val base = serverUrl.ifBlank {
+            if (NativeServer.isRunning() == 1 && NativeServer.port() > 0) {
+                "http://127.0.0.1:${NativeServer.port()}"
+            } else {
+                ""
+            }
+        }
+        if (base.isBlank()) {
+            notifyJsPdfError("Serveur local pas prêt")
+            return
+        }
+        io.execute {
+            try {
+                var name = "cours.pdf"
+                contentResolver.query(uri, null, null, null, null)?.use { c ->
+                    val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (idx >= 0 && c.moveToFirst()) {
+                        val n = c.getString(idx)
+                        if (!n.isNullOrBlank()) name = n
+                    }
+                }
+                val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    ?: throw IllegalStateException("Impossible de lire le PDF")
+                if (bytes.isEmpty()) throw IllegalStateException("PDF vide")
+                if (bytes.size > 15 * 1024 * 1024) {
+                    throw IllegalStateException("PDF trop lourd (max 15 Mo)")
+                }
+
+                val boundary = "----ThotBoundary${System.currentTimeMillis()}"
+                val url = URL("$base/api/import")
+                val conn = (url.openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    doOutput = true
+                    connectTimeout = 30000
+                    readTimeout = 120000
+                    setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+                }
+                DataOutputStream(conn.outputStream).use { out ->
+                    out.writeBytes("--$boundary\r\n")
+                    out.writeBytes(
+                        "Content-Disposition: form-data; name=\"file\"; filename=\"${
+                            name.replace("\"", "")
+                        }\"\r\n"
+                    )
+                    out.writeBytes("Content-Type: application/pdf\r\n\r\n")
+                    out.write(bytes)
+                    out.writeBytes("\r\n--$boundary--\r\n")
+                    out.flush()
+                }
+                val code = conn.responseCode
+                val body = try {
+                    (if (code in 200..299) conn.inputStream else conn.errorStream)
+                        ?.bufferedReader()?.readText().orEmpty()
+                } catch (_: Exception) {
+                    ""
+                }
+                conn.disconnect()
+                if (code !in 200..299) {
+                    val err = Regex(""""error"\s*:\s*"([^"]+)"""").find(body)?.groupValues?.getOrNull(1)
+                        ?: "HTTP $code"
+                    throw IllegalStateException(err)
+                }
+                main.post {
+                    binding.webView.evaluateJavascript(
+                        "window.__thotPdfImported && window.__thotPdfImported();",
+                        null
+                    )
+                }
+            } catch (t: Throwable) {
+                main.post {
+                    notifyJsPdfError(t.message ?: t.javaClass.simpleName)
+                }
+            }
+        }
+    }
+
+    private fun notifyJsPdfError(msg: String) {
+        val q = org.json.JSONObject.quote(msg)
+        binding.webView.evaluateJavascript(
+            "window.__thotPdfImportError && window.__thotPdfImportError($q);",
+            null
+        )
     }
 
     private fun beginNativeDictation(lang: String) {
@@ -327,6 +432,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
         endNativeDictation()
+        dictationLang = lang.ifBlank { Locale.getDefault().toLanguageTag() }
         val recognizer = SpeechRecognizer.createSpeechRecognizer(this)
         speechRecognizer = recognizer
         dictationActive = true
@@ -336,19 +442,16 @@ class MainActivity : AppCompatActivity() {
             override fun onRmsChanged(rmsdB: Float) {}
             override fun onBufferReceived(buffer: ByteArray?) {}
             override fun onEndOfSpeech() {
-                // Continuous-ish: restart while active
-                if (dictationActive) {
-                    main.postDelayed({ if (dictationActive) launchRecognizerIntent(lang) }, 250)
-                }
+                // Let onResults / onError schedule the next listen — avoid double-start.
             }
             override fun onError(error: Int) {
                 if (!dictationActive) return
-                // Restart on busy/timeout; surface hard errors
                 if (error == SpeechRecognizer.ERROR_NO_MATCH ||
                     error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT ||
-                    error == SpeechRecognizer.ERROR_CLIENT
+                    error == SpeechRecognizer.ERROR_CLIENT ||
+                    error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY
                 ) {
-                    main.postDelayed({ if (dictationActive) launchRecognizerIntent(lang) }, 300)
+                    scheduleSpeechRestart(400)
                 } else {
                     val msg = "speech error $error"
                     binding.webView.evaluateJavascript(
@@ -363,9 +466,7 @@ class MainActivity : AppCompatActivity() {
                 if (text.isNotEmpty()) {
                     deliverSpeech(text, true)
                 }
-                if (dictationActive) {
-                    main.postDelayed({ if (dictationActive) launchRecognizerIntent(lang) }, 200)
-                }
+                if (dictationActive) scheduleSpeechRestart(350)
             }
             override fun onPartialResults(partialResults: Bundle?) {
                 val texts = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
@@ -374,20 +475,32 @@ class MainActivity : AppCompatActivity() {
             }
             override fun onEvent(eventType: Int, params: Bundle?) {}
         })
-        launchRecognizerIntent(lang)
+        launchRecognizerIntent()
     }
 
-    private fun launchRecognizerIntent(lang: String) {
+    private fun scheduleSpeechRestart(delayMs: Long) {
+        restartSpeechRunnable?.let { main.removeCallbacks(it) }
+        val r = Runnable {
+            if (dictationActive) launchRecognizerIntent()
+        }
+        restartSpeechRunnable = r
+        main.postDelayed(r, delayMs)
+    }
+
+    private fun launchRecognizerIntent() {
         val recognizer = speechRecognizer ?: return
+        if (!dictationActive) return
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(
                 RecognizerIntent.EXTRA_LANGUAGE_MODEL,
                 RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
             )
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, lang.ifBlank { Locale.getDefault().toLanguageTag() })
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, dictationLang)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
             putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1000L)
         }
         try {
             recognizer.startListening(intent)
@@ -409,6 +522,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun endNativeDictation() {
         dictationActive = false
+        restartSpeechRunnable?.let { main.removeCallbacks(it) }
+        restartSpeechRunnable = null
         try {
             speechRecognizer?.stopListening()
         } catch (_: Exception) {

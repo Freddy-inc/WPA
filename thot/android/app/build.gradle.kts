@@ -11,8 +11,8 @@ android {
         applicationId = "app.thot.mobile"
         minSdk = 26
         targetSdk = 34
-        versionCode = 4
-        versionName = "0.2.1-embedded-debug"
+        versionCode = 5
+        versionName = "0.3.0-embedded-debug"
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }
