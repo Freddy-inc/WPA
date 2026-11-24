@@ -1,0 +1,9 @@
+/.gradle/
+/build/
+/app/build/
+/local.properties
+/.idea/
+*.iml
+.DS_Store
+/captures/
+# keep jniLibs/*.so and assets/thot-static for assembleDebug without NDK

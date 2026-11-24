@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Thot</string>
+    <string name="action_save">Enregistrer</string>
+    <string name="action_retry">Réessayer</string>
+    <string name="action_clear_key">Effacer la clé</string>
+    <string name="menu_server">Clé Groq (optionnel)…</string>
+    <string name="menu_reload">Recharger</string>
+    <string name="error_title">Démarrage Thot</string>
+    <string name="error_checklist_embedded">Mode embarqué : le serveur Rust tourne dans l’APK sur 127.0.0.1.\n\n• Pas besoin d’URL PC / cloud pour l’UI et SQLite\n• Internet requis pour Groq, Wiktionary/Wikipedia, TTS MS Edge\n• Sans clé Groq : réponses stub / démo limitées\n• Engrenage : coller une clé Groq (stockée seulement sur l’appareil)\n• Réessayer si le premier démarrage a échoué</string>
+    <string name="groq_key_title">Clé Groq (optionnel)</string>
+    <string name="groq_key_hint">gsk_…</string>
+    <string name="groq_key_message">Optionnel. Stockée uniquement dans les fichiers privés de l’app (pas dans le dépôt). Sans clé, Thot fonctionne en mode stub pour une partie des features. Ne partagez jamais votre clé.</string>
+    <string name="groq_saved_restart">Clé enregistrée — redémarrage du serveur local…</string>
+    <string name="groq_cleared">Clé effacée</string>
+    <string name="choose_pdf">Choisir un PDF</string>
+    <string name="mic_denied">Micro refusé — activez-le dans les réglages Android pour dicter des notes.</string>
+    <string name="speech_unavailable">Reconnaissance vocale indisponible sur cet appareil (pas de service Google/Speech).</string>
+    <string name="notify_denied">Notifications refusées — activez-les dans les réglages pour les rappels d’étude.</string>
+    <string name="reminders_scheduled">Rappels d’étude planifiés</string>
+</resources>
