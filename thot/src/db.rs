@@ -197,13 +197,43 @@ impl Db {
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS kv_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS class_slots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                course_id INTEGER,
+                day_of_week INTEGER NOT NULL CHECK (day_of_week BETWEEN 0 AND 6),
+                start_time TEXT NOT NULL,
+                end_time TEXT NOT NULL,
+                label TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS exams (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                course_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                exam_date TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS revision_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                course_id INTEGER,
+                scheduled_date TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                method TEXT NOT NULL DEFAULT '',
+                title TEXT NOT NULL DEFAULT '',
+                done INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            );
             "#,
         )
         .execute(&self.pool)
         .await?;
 
         sqlx::query(
-            "INSERT INTO schema_meta (key, value) VALUES ('version', '3')
+            "INSERT INTO schema_meta (key, value) VALUES ('version', '4')
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         )
         .execute(&self.pool)
@@ -1603,6 +1633,285 @@ impl Db {
             .await?;
         Ok(res.rows_affected() > 0)
     }
+
+    /* ---------- documents: move between courses ---------- */
+
+    pub async fn move_document(&self, id: i64, to_course_id: i64) -> Result<DocumentRow> {
+        let doc = self
+            .get_document(id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("document introuvable"))?;
+        let _ = self
+            .get_course_by_id(to_course_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("cours cible introuvable"))?;
+        if doc.course_id == to_course_id {
+            return Ok(doc);
+        }
+        let from = doc.course_id;
+        let was_active = doc.active;
+        sqlx::query("UPDATE documents SET active = 0, course_id = ? WHERE id = ?")
+            .bind(to_course_id)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        // Make it active in destination
+        sqlx::query("UPDATE documents SET active = 0 WHERE course_id = ?")
+            .bind(to_course_id)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("UPDATE documents SET active = 1 WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        if was_active {
+            if let Some(next) = self.list_documents(from).await?.into_iter().next() {
+                let _ = self.set_active_document(next.id).await?;
+            }
+        }
+        self.refresh_course_corpus(from).await?;
+        self.refresh_course_corpus(to_course_id).await?;
+        self.get_document(id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("document missing after move"))
+    }
+
+    /* ---------- kv settings ---------- */
+
+    pub async fn get_kv(&self, key: &str) -> Result<Option<String>> {
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT value FROM kv_settings WHERE key = ?")
+                .bind(key)
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(row.map(|(v,)| v))
+    }
+
+    pub async fn set_kv(&self, key: &str, value: &str) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO kv_settings (key, value) VALUES (?, ?)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        )
+        .bind(key)
+        .bind(value)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /* ---------- class slots / exams / revision ---------- */
+
+    pub async fn list_class_slots(&self) -> Result<Vec<ClassSlotRow>> {
+        let rows = sqlx::query_as::<_, ClassSlotRow>(
+            "SELECT id, course_id, day_of_week, start_time, end_time, label, created_at
+             FROM class_slots ORDER BY day_of_week, start_time, id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    pub async fn add_class_slot(
+        &self,
+        course_id: Option<i64>,
+        day_of_week: i64,
+        start_time: &str,
+        end_time: &str,
+        label: &str,
+    ) -> Result<ClassSlotRow> {
+        if !(0..=6).contains(&day_of_week) {
+            anyhow::bail!("jour invalide (0=lun … 6=dim)");
+        }
+        let now = now_iso();
+        let res = sqlx::query(
+            "INSERT INTO class_slots (course_id, day_of_week, start_time, end_time, label, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(course_id)
+        .bind(day_of_week)
+        .bind(start_time)
+        .bind(end_time)
+        .bind(label)
+        .bind(&now)
+        .execute(&self.pool)
+        .await?;
+        let id = res.last_insert_rowid();
+        self.get_class_slot(id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("slot missing after insert"))
+    }
+
+    pub async fn get_class_slot(&self, id: i64) -> Result<Option<ClassSlotRow>> {
+        let row = sqlx::query_as::<_, ClassSlotRow>(
+            "SELECT id, course_id, day_of_week, start_time, end_time, label, created_at
+             FROM class_slots WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    pub async fn delete_class_slot(&self, id: i64) -> Result<bool> {
+        let res = sqlx::query("DELETE FROM class_slots WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    pub async fn list_exams(&self) -> Result<Vec<ExamRow>> {
+        let rows = sqlx::query_as::<_, ExamRow>(
+            "SELECT id, course_id, title, exam_date, created_at FROM exams
+             ORDER BY exam_date, id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    pub async fn add_exam(
+        &self,
+        course_id: i64,
+        title: &str,
+        exam_date: &str,
+    ) -> Result<ExamRow> {
+        let _ = self
+            .get_course_by_id(course_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("cours introuvable"))?;
+        let now = now_iso();
+        let res = sqlx::query(
+            "INSERT INTO exams (course_id, title, exam_date, created_at) VALUES (?, ?, ?, ?)",
+        )
+        .bind(course_id)
+        .bind(title)
+        .bind(exam_date)
+        .bind(&now)
+        .execute(&self.pool)
+        .await?;
+        let id = res.last_insert_rowid();
+        Ok(ExamRow {
+            id,
+            course_id,
+            title: title.to_string(),
+            exam_date: exam_date.to_string(),
+            created_at: now,
+        })
+    }
+
+    pub async fn delete_exam(&self, id: i64) -> Result<bool> {
+        let res = sqlx::query("DELETE FROM exams WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    pub async fn list_revision_sessions(&self) -> Result<Vec<RevisionSessionRow>> {
+        let rows = sqlx::query_as::<_, RevisionSessionRow>(
+            "SELECT id, course_id, scheduled_date, kind, method, title, done, created_at
+             FROM revision_sessions ORDER BY scheduled_date, id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    pub async fn clear_future_revision_sessions(&self) -> Result<()> {
+        let today = Utc::now().date_naive().format("%Y-%m-%d").to_string();
+        sqlx::query("DELETE FROM revision_sessions WHERE scheduled_date >= ? AND done = 0")
+            .bind(&today)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn add_revision_session(
+        &self,
+        course_id: Option<i64>,
+        scheduled_date: &str,
+        kind: &str,
+        method: &str,
+        title: &str,
+    ) -> Result<RevisionSessionRow> {
+        let now = now_iso();
+        let res = sqlx::query(
+            "INSERT INTO revision_sessions
+             (course_id, scheduled_date, kind, method, title, done, created_at)
+             VALUES (?, ?, ?, ?, ?, 0, ?)",
+        )
+        .bind(course_id)
+        .bind(scheduled_date)
+        .bind(kind)
+        .bind(method)
+        .bind(title)
+        .bind(&now)
+        .execute(&self.pool)
+        .await?;
+        let id = res.last_insert_rowid();
+        Ok(RevisionSessionRow {
+            id,
+            course_id,
+            scheduled_date: scheduled_date.to_string(),
+            kind: kind.to_string(),
+            method: method.to_string(),
+            title: title.to_string(),
+            done: false,
+            created_at: now,
+        })
+    }
+
+    pub async fn mark_revision_done(&self, id: i64, done: bool) -> Result<Option<RevisionSessionRow>> {
+        let res = sqlx::query("UPDATE revision_sessions SET done = ? WHERE id = ?")
+            .bind(done)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        if res.rows_affected() == 0 {
+            return Ok(None);
+        }
+        let row = sqlx::query_as::<_, RevisionSessionRow>(
+            "SELECT id, course_id, scheduled_date, kind, method, title, done, created_at
+             FROM revision_sessions WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct ClassSlotRow {
+    pub id: i64,
+    pub course_id: Option<i64>,
+    pub day_of_week: i64,
+    pub start_time: String,
+    pub end_time: String,
+    pub label: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct ExamRow {
+    pub id: i64,
+    pub course_id: i64,
+    pub title: String,
+    pub exam_date: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct RevisionSessionRow {
+    pub id: i64,
+    pub course_id: Option<i64>,
+    pub scheduled_date: String,
+    pub kind: String,
+    pub method: String,
+    pub title: String,
+    pub done: bool,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]

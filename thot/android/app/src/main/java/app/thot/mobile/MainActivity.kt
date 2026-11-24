@@ -5,10 +5,12 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -71,6 +73,14 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private val notifyPermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (!granted) {
+            Toast.makeText(this, R.string.notify_denied, Toast.LENGTH_LONG).show()
+        }
+    }
+
     /** Fallback for plain &lt;input type=file&gt; (desktop-parity / older paths). */
     private val fileChooserLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -125,6 +135,10 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+
+        // Portrait by default; reader unlocks SENSOR via JS bridge
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        StudyReminderReceiver.ensureChannel(this)
 
         ensureMicPermission()
 
@@ -325,6 +339,51 @@ class MainActivity : AppCompatActivity() {
 
         @JavascriptInterface
         fun hasNativePicker(): Boolean = true
+
+        @JavascriptInterface
+        fun setOrientation(mode: String) {
+            main.post {
+                requestedOrientation = when (mode.lowercase()) {
+                    "sensor", "full", "landscape", "unspecified" ->
+                        ActivityInfo.SCREEN_ORIENTATION_SENSOR
+                    else -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun requestNotifyPermission() {
+            main.post {
+                if (Build.VERSION.SDK_INT >= 33) {
+                    if (ContextCompat.checkSelfPermission(
+                            this@MainActivity,
+                            Manifest.permission.POST_NOTIFICATIONS
+                        ) != PackageManager.PERMISSION_GRANTED
+                    ) {
+                        notifyPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun scheduleReminders(prefsJson: String) {
+            main.post {
+                ReminderScheduler.schedule(this@MainActivity, prefsJson)
+                Toast.makeText(
+                    this@MainActivity,
+                    R.string.reminders_scheduled,
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+
+        @JavascriptInterface
+        fun cancelReminders() {
+            main.post {
+                ReminderScheduler.cancel(this@MainActivity)
+            }
+        }
     }
 
     private fun uploadPdfUri(uri: Uri) {

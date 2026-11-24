@@ -877,6 +877,112 @@
     #selMenu .sel-actions .save:disabled { opacity: 0.45; }
     #selMenu .badge { margin-top: 0.2rem; }
     #selMenu .save-msg { font-size: 0.78rem; margin-top: 0.35rem; color: #9fd6b8; }
+
+    /* Aperçu-style fullscreen reader */
+    body.reader-fs .tab-bar { display: none !important; }
+    body.reader-fs .hub-top { display: none !important; }
+    body.reader-fs #hubSubtitle { display: none !important; }
+    body.reader-fs .app-scroll { padding-bottom: 0 !important; }
+    body.reader-fs .app-shell { padding: 0 !important; }
+    body.reader-fs {
+      overflow: hidden;
+    }
+    body.reader-fs #readerSection.hub-panel,
+    body.reader-fs #readerSection.hub-panel.active {
+      position: fixed !important;
+      top: 0; left: 0; right: 0; bottom: 0;
+      width: 100vw; height: 100dvh;
+      z-index: 200;
+      display: flex !important;
+      flex-direction: column;
+      background: #1c2220;
+      margin: 0 !important;
+      border-radius: 0 !important;
+      max-height: none !important;
+      padding: 0 !important;
+      animation: none !important;
+    }
+    body.reader-fs #readerSection .viewer-chrome {
+      flex: 0 0 auto;
+      background: #24302c;
+      color: #e8f0ec;
+      border-radius: 0;
+      margin: 0;
+      padding: 0.55rem 0.7rem;
+      padding-top: calc(0.55rem + env(safe-area-inset-top, 0px));
+      z-index: 2;
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+    }
+    body.reader-fs #readerSection .viewer-hint { display: none !important; }
+    body.reader-fs #pdfScroll {
+      flex: 1 1 auto !important;
+      min-height: 0 !important;
+      max-height: none !important;
+      height: auto !important;
+      background: #3a424a;
+      padding: 0.75rem 0 1.5rem;
+    }
+    body.reader-fs .phone {
+      max-width: none !important;
+      width: 100% !important;
+      height: 100% !important;
+      border-radius: 0 !important;
+      box-shadow: none !important;
+      border: none !important;
+    }
+    body.reader-fs .phone::before { display: none !important; }
+    body.reader-fs .app-scroll {
+      overflow: hidden !important;
+    }
+    .reader-fs-actions { display: flex; gap: 0.35rem; align-items: center; }
+    .reader-fs-actions button {
+      min-height: 40px; padding: 0.35rem 0.65rem; font-size: 0.82rem;
+      border-radius: 10px; background: rgba(255,255,255,0.14); color: #eef5f1;
+      border: 1px solid rgba(255,255,255,0.2);
+    }
+    body:not(.reader-fs) .reader-fs-only { display: none !important; }
+    body.reader-fs .reader-normal-only { display: none !important; }
+    /* Notes overlay while reading */
+    .reader-notes-sheet {
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 260;
+      max-height: min(48vh, 420px);
+      background: #f4faf7;
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+      border-radius: 18px 18px 0 0;
+      border: 1px solid var(--line);
+      box-shadow: 0 -12px 40px rgba(20,40,60,0.22);
+      padding: 0.65rem 0.85rem calc(0.85rem + env(safe-area-inset-bottom, 0px));
+      display: none; flex-direction: column; gap: 0.4rem;
+    }
+    .reader-notes-sheet.open { display: flex; }
+    .reader-notes-sheet h3 { margin: 0; font-size: 1rem; font-family: var(--font-display); }
+    .reader-notes-sheet textarea {
+      width: 100%; min-height: 7rem; resize: vertical; font: inherit;
+      border-radius: 12px; border: 1px solid var(--line-strong); padding: 0.55rem;
+      background: rgba(255,255,255,0.85);
+    }
+    .reader-notes-sheet .actions { margin: 0; }
+    .method-badge {
+      display: inline-flex; align-items: center; gap: 0.35rem;
+      font-size: 0.78rem; color: var(--muted); margin: 0 0 0.55rem;
+    }
+    .method-badge strong { color: var(--ink); font-weight: 600; }
+    .pomodoro-bar {
+      display: none; align-items: center; gap: 0.5rem; margin: 0 0 0.65rem;
+      padding: 0.45rem 0.55rem; border-radius: 12px; background: rgba(255,255,255,0.45);
+      border: 1px solid var(--line);
+    }
+    .pomodoro-bar.visible { display: flex; }
+    .pomodoro-bar .clock { font-variant-numeric: tabular-nums; font-weight: 600; min-width: 3.2rem; }
+    .plan-day { font-size: 0.78rem; color: var(--muted); margin: 0.55rem 0 0.2rem; }
+    .doc-course-label { font-size: 0.8rem; color: var(--muted); margin: 0 0 0.35rem; }
+    select.doc-move {
+      font-size: 0.78rem; max-width: 9.5rem; padding: 0.25rem 0.35rem;
+      border-radius: 8px; border: 1px solid var(--line-strong); background: #fff;
+    }
+
   </style>
 </head>
 <body>
@@ -935,8 +1041,9 @@
 
       <div class="hub-stack">
     <section id="import" class="hub-panel active">
-      <h2>Documents</h2>
-      <p class="meta">PDF du cours (texte extractible). Un fichier = ajout immédiat.</p>
+      <h2>Documents du cours</h2>
+      <p class="meta doc-course-label" id="docsCourseLabel">Cours actif</p>
+      <p class="meta">PDFs rattachés à ce cours uniquement. Déplacez un fichier vers un autre cours si besoin.</p>
       <label for="pdf">Ajouter un PDF</label>
       <input type="file" id="pdf" accept="application/pdf,.pdf" />
       <div class="actions">
@@ -986,12 +1093,24 @@
           <span id="pageLabel">p. 1 / 1</span>
           <button type="button" id="nextPage" aria-label="Page suivante">›</button>
         </div>
+        <div class="reader-fs-actions">
+          <button type="button" class="reader-normal-only" id="readerNotesBtn" title="Notes">Notes</button>
+          <button type="button" class="reader-normal-only" id="readerFsEnter" title="Plein écran">Plein écran</button>
+          <button type="button" class="reader-fs-only" id="readerNotesBtnFs" title="Notes">Notes</button>
+          <button type="button" class="reader-fs-only" id="readerFsExit" title="Quitter">✕</button>
+        </div>
       </div>
       <div class="viewer-hint">Sélectionnez un mot ou une <strong>phrase</strong> — Sens (L1), + Fiche, Connu / À revoir.</div>
       <div id="pdfScroll"></div>
     </section>
 
     <section id="studyPanel" class="hub-panel">
+      <p class="method-badge" id="studyMethodBadge">Méthode : <strong>—</strong></p>
+      <div class="pomodoro-bar" id="pomodoroBar">
+        <span class="clock" id="pomodoroClock">25:00</span>
+        <button type="button" class="secondary" id="pomodoroStart">Démarrer 25 min</button>
+        <button type="button" class="ghost" id="pomodoroStop" hidden>Stop</button>
+      </div>
       <div id="fichesSection" class="hub-block">
       <h2>Mes fiches</h2>
       <p class="meta" id="fichesCountLabel">Aucune fiche pour l’instant.</p>
@@ -1050,22 +1169,114 @@
       </div>
     </section>
 
-    <section id="podcastSection" class="hub-panel">
-      <h2>Podcast</h2>
-      <p class="meta">Aperçu deux voix du corpus, ou remédiation des notions manquées. Texte → TTS. Pas de micro.</p>
-      <div class="actions">
-        <button type="button" id="podcastGenBtn">Générer un aperçu</button>
-        <button type="button" class="secondary" id="podcastMissesBtn" hidden>Podcast notions manquées</button>
-        <button type="button" class="ghost" id="podcastStopBtn" hidden>Stop</button>
+    <section id="planningPanel" class="hub-panel">
+      <div class="hub-block">
+        <h2>Méthode de révision</h2>
+        <p class="meta">Choisissez une méthode — Thot l’applique dans Étudier.</p>
+        <div id="methodsList" class="fiche-list"></div>
+        <div id="methodLearn" class="fiche-panel" hidden>
+          <p class="meta" id="methodLearnText"></p>
+          <div class="actions">
+            <button type="button" id="methodUseBtn">Utiliser cette méthode</button>
+            <button type="button" class="ghost" id="methodLearnBack">Fermer</button>
+          </div>
+        </div>
+        <div id="methodMsg"></div>
       </div>
+      <div class="hub-block">
+        <h2>Rappels d’étude</h2>
+        <p class="meta">Notifications système sur Android. Aucun audio conservé.</p>
+        <label style="display:flex;align-items:center;gap:0.45rem;color:var(--ink)">
+          <input type="checkbox" id="remindEnabled" /> Activer les rappels
+        </label>
+        <div class="row" style="margin-top:0.45rem">
+          <div>
+            <label for="remindHour">Heure</label>
+            <input type="number" id="remindHour" min="0" max="23" value="18" />
+          </div>
+          <div>
+            <label for="remindTarget">Cible</label>
+            <select id="remindTarget">
+              <option value="both">Fiches + quiz</option>
+              <option value="fiches">Fiches</option>
+              <option value="quiz">Quiz</option>
+            </select>
+          </div>
+        </div>
+        <div class="actions">
+          <button type="button" id="remindSaveBtn">Enregistrer</button>
+        </div>
+        <div id="remindMsg"></div>
+      </div>
+      <div class="hub-block">
+        <h2>Emploi du temps (cours)</h2>
+        <p class="meta">Créneaux de classe — le plan de révision les évite quand possible.</p>
+        <div class="row">
+          <div>
+            <label for="slotDay">Jour</label>
+            <select id="slotDay">
+              <option value="0">Lundi</option>
+              <option value="1">Mardi</option>
+              <option value="2">Mercredi</option>
+              <option value="3">Jeudi</option>
+              <option value="4">Vendredi</option>
+              <option value="5">Samedi</option>
+              <option value="6">Dimanche</option>
+            </select>
+          </div>
+          <div>
+            <label for="slotStart">Début</label>
+            <input type="time" id="slotStart" value="09:00" />
+          </div>
+          <div>
+            <label for="slotEnd">Fin</label>
+            <input type="time" id="slotEnd" value="11:00" />
+          </div>
+        </div>
+        <label for="slotLabel">Libellé</label>
+        <input type="text" id="slotLabel" placeholder="Ex. CM Biologie" />
+        <div class="actions">
+          <button type="button" id="slotAddBtn">Ajouter</button>
+        </div>
+        <div id="slotMsg"></div>
+        <div id="slotsList" class="fiche-list" style="margin-top:0.55rem"></div>
+      </div>
+      <div class="hub-block">
+        <h2>Examens</h2>
+        <p class="meta">Dates d’évaluation — le plan densifie les sessions avant.</p>
+        <label for="examTitle">Titre</label>
+        <input type="text" id="examTitle" placeholder="Ex. Partiel biologie" />
+        <label for="examDate">Date</label>
+        <input type="date" id="examDate" />
+        <div class="actions">
+          <button type="button" id="examAddBtn">Ajouter</button>
+        </div>
+        <div id="examMsg"></div>
+        <div id="examsList" class="fiche-list" style="margin-top:0.55rem"></div>
+      </div>
+      <div class="hub-block">
+        <h2>Plan de révision</h2>
+        <p class="meta">Généré à partir des examens, de l’EDT et de la méthode choisie.</p>
+        <div class="actions">
+          <button type="button" id="planGenBtn">Générer / actualiser</button>
+        </div>
+        <div id="planMsg"></div>
+        <div id="planList" class="fiche-list" style="margin-top:0.55rem"></div>
+      </div>
+    </section>
+    <!-- Podcast ON HOLD: section kept out of tabs -->
+    <section id="podcastSection" class="hub-panel" hidden aria-hidden="true" style="display:none!important">
       <div id="podcastMsg"></div>
-      <div id="podcastPlayer" class="fiche-panel" hidden style="margin-top:0.75rem">
-        <p class="meta" id="podcastNowTitle"></p>
-        <audio id="podcastAudio" controls style="width:100%;margin:0.4rem 0"></audio>
-        <div id="podcastChapters" class="fiche-list" style="margin:0.45rem 0"></div>
-        <div id="podcastScriptPreview" class="meta" style="max-height:9rem;overflow:auto;white-space:pre-wrap"></div>
+      <button type="button" id="podcastGenBtn" hidden></button>
+      <button type="button" id="podcastMissesBtn" hidden></button>
+      <button type="button" id="podcastStopBtn" hidden></button>
+      <div id="podcastPlayer" hidden>
+        <p id="podcastNowTitle"></p>
+        <audio id="podcastAudio"></audio>
+        <div id="podcastChapters"></div>
+        <div id="podcastScriptPreview"></div>
       </div>
-      <div id="podcastList" class="fiche-list" style="margin-top:0.75rem"></div>
+      <div id="podcastList"></div>
     </section>
       </div><!-- .hub-stack -->
     </div><!-- #viewHub -->
@@ -1076,9 +1287,27 @@
     <button type="button" class="hub-tab active" data-target="import"><span class="tab-ico" aria-hidden="true">▣</span>Docs</button>
     <button type="button" class="hub-tab" data-target="readerSection"><span class="tab-ico" aria-hidden="true">☰</span>Lecture</button>
     <button type="button" class="hub-tab" data-target="studyPanel"><span class="tab-ico" aria-hidden="true">◇</span>Étudier</button>
-    <button type="button" class="hub-tab" data-target="podcastSection"><span class="tab-ico" aria-hidden="true">♪</span>Podcast</button>
+    <button type="button" class="hub-tab" data-target="planningPanel"><span class="tab-ico" aria-hidden="true">▦</span>Planning</button>
   </nav>
   </div><!-- .phone -->
+
+
+  <div id="readerNotesSheet" class="reader-notes-sheet" aria-label="Notes en lecture">
+    <div class="actions" style="margin:0;justify-content:space-between">
+      <h3>Notes du cours</h3>
+      <button type="button" class="ghost" id="readerNotesClose">Fermer</button>
+    </div>
+    <p class="meta">Texte seulement — le PDF reste visible derrière.</p>
+    <label for="readerNoteTitle">Titre</label>
+    <input type="text" id="readerNoteTitle" placeholder="Note en lecture" />
+    <label for="readerNoteBody">Brouillon</label>
+    <textarea id="readerNoteBody" rows="6" placeholder="Tapez pendant que vous lisez…"></textarea>
+    <div class="actions">
+      <button type="button" id="readerNoteSave">Sauver</button>
+      <button type="button" class="secondary" id="readerNoteNew">Nouvelle</button>
+    </div>
+    <div id="readerNoteMsg"></div>
+  </div>
 
   <div id="selMenu" role="dialog" aria-label="Menu sélection">
     <div class="sel-term" id="selTerm"></div>
@@ -1194,21 +1423,124 @@
       const alias = {
         fichesSection: "studyPanel",
         generate: "studyPanel",
-        suitePanel: "podcastSection",
+        suitePanel: "planningPanel",
+        podcastSection: "planningPanel",
         langs: "import",
         progression: "studyPanel",
       };
-      const panels = ["import", "readerSection", "studyPanel", "podcastSection"];
+      const panels = ["import", "readerSection", "studyPanel", "planningPanel"];
       const resolved = panels.includes(targetId) ? targetId : (alias[targetId] || "import");
       document.querySelectorAll(".hub-tab").forEach((t) => {
         t.classList.toggle("active", t.dataset.target === resolved);
       });
       document.querySelectorAll(".hub-panel").forEach((p) => {
+        if (p.id === "podcastSection") {
+          p.classList.remove("active");
+          return;
+        }
         const on = p.id === resolved;
         p.classList.toggle("active", on);
         if (p.id === "readerSection") p.classList.toggle("visible", on);
       });
+      // Orientation: unlock in reader, lock portrait elsewhere (Android)
+      if (resolved === "readerSection") unlockReaderOrientation();
+      else {
+        exitReaderFullscreen();
+        lockPortraitOrientation();
+      }
+      if (resolved === "planningPanel") refreshPlanning();
+      if (resolved === "studyPanel") refreshStudyMethodUi();
       $("appScroll")?.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    function unlockReaderOrientation() {
+      try {
+        if (window.ThotAndroid && ThotAndroid.setOrientation) ThotAndroid.setOrientation("sensor");
+      } catch (_) {}
+    }
+    function lockPortraitOrientation() {
+      try {
+        if (window.ThotAndroid && ThotAndroid.setOrientation) ThotAndroid.setOrientation("portrait");
+      } catch (_) {}
+    }
+
+    let readerFs = false;
+    function enterReaderFullscreen() {
+      // Ensure Lecture panel is active without clearing FS via setHubTab else-branch
+      document.querySelectorAll(".hub-tab").forEach((t) => {
+        t.classList.toggle("active", t.dataset.target === "readerSection");
+      });
+      document.querySelectorAll(".hub-panel").forEach((p) => {
+        if (p.id === "podcastSection") return;
+        const on = p.id === "readerSection";
+        p.classList.toggle("active", on);
+        if (p.id === "readerSection") p.classList.toggle("visible", on);
+      });
+      readerFs = true;
+      document.body.classList.add("reader-fs");
+      // Reparent outside .phone overflow clip for true viewport fullscreen
+      const rs = $("readerSection");
+      if (rs && rs.parentElement !== document.body) {
+        window.__thotReaderHome = rs.parentElement;
+        document.body.appendChild(rs);
+      }
+      unlockReaderOrientation();
+      try { if (pdfDoc) renderPage(currentPage); } catch (_) {}
+    }
+    function exitReaderFullscreen() {
+      if (!readerFs && !document.body.classList.contains("reader-fs")) return;
+      readerFs = false;
+      document.body.classList.remove("reader-fs");
+      closeReaderNotes();
+      const rs = $("readerSection");
+      const home = window.__thotReaderHome || document.querySelector(".hub-stack");
+      if (rs && home && rs.parentElement !== home) home.appendChild(rs);
+      lockPortraitOrientation();
+      try { if (pdfDoc) renderPage(currentPage); } catch (_) {}
+    }
+
+    let readerNoteId = null;
+    function openReaderNotes() {
+      const sheet = $("readerNotesSheet");
+      if (!sheet) return;
+      if (sheet.parentElement !== document.body) {
+        document.body.appendChild(sheet);
+      }
+      sheet.classList.add("open");
+      if (!readerNoteId) {
+        $("readerNoteTitle").value = "Note en lecture";
+        $("readerNoteBody").value = "";
+      }
+    }
+    function closeReaderNotes() {
+      $("readerNotesSheet")?.classList.remove("open");
+    }
+    async function ensureReaderNote() {
+      if (readerNoteId) return readerNoteId;
+      const data = await api("/api/notes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: ($("readerNoteTitle").value || "Note en lecture").trim() || "Note en lecture" }),
+      });
+      readerNoteId = data.note.id;
+      return readerNoteId;
+    }
+    async function saveReaderNote() {
+      try {
+        const id = await ensureReaderNote();
+        await api(`/api/notes/${id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: $("readerNoteTitle").value,
+            raw_text: $("readerNoteBody").value,
+          }),
+        });
+        setMsg($("readerNoteMsg"), "Note sauvée (texte seulement).", true);
+        await loadNotes();
+      } catch (e) {
+        setMsg($("readerNoteMsg"), e.message, false);
+      }
     }
 
     $("hubTabs")?.querySelectorAll(".hub-tab").forEach((tab) => {
@@ -1349,26 +1681,56 @@
 
     function renderDocuments(docs, active) {
       const el = $("docsList");
+      const label = $("docsCourseLabel");
+      if (label) {
+        const c = coursesCache.find((x) => x.id === activeCourseId);
+        label.textContent = c
+          ? `Cours : ${c.title} · ${(docs || []).length} PDF`
+          : "Cours actif";
+      }
       if (!docs.length) {
-        el.innerHTML = `<div class="empty-state"><p>Aucun document — ajoutez un premier PDF.</p></div>`;
+        el.innerHTML = `<div class="empty-state"><p>Aucun document — ajoutez un premier PDF à ce cours.</p></div>`;
         return;
       }
+      const others = (coursesCache || []).filter((c) => c.id !== activeCourseId);
+      const moveOpts = others.length
+        ? others.map((c) => `<option value="${c.id}">→ ${escapeHtml(c.title)}</option>`).join("")
+        : "";
       el.innerHTML = docs.map((d) => {
         const isActive = active && d.id === active.id;
-        return `<div class="fiche-row" data-doc-id="${d.id}" style="cursor:default">
+        return `<div class="fiche-row" data-doc-id="${d.id}" style="cursor:default;flex-wrap:wrap">
           <div class="preview">
             <strong>${escapeHtml(d.filename)}${isActive ? " · actif" : ""}</strong>
-            <div class="sub">${d.char_count || 0} car. · ${d.total_pages || "?"} pages</div>
+            <div class="sub">${d.char_count || 0} car. · ${d.total_pages || "?"} pages · ce cours</div>
           </div>
-          <div class="actions" style="margin:0; flex-shrink:0">
+          <div class="actions" style="margin:0; flex-shrink:0;flex-wrap:wrap">
             ${isActive
               ? `<span class="status-pill">lecteur</span>`
               : `<button type="button" class="secondary doc-switch" data-id="${d.id}">Ouvrir</button>`}
+            ${moveOpts ? `<select class="doc-move" data-id="${d.id}" aria-label="Déplacer"><option value="">Déplacer…</option>${moveOpts}</select>` : ""}
           </div>
         </div>`;
       }).join("");
       el.querySelectorAll(".doc-switch").forEach((btn) => {
         btn.onclick = () => switchDocument(Number(btn.dataset.id));
+      });
+      el.querySelectorAll("select.doc-move").forEach((sel) => {
+        sel.onchange = async () => {
+          const to = Number(sel.value);
+          if (!to) return;
+          try {
+            await api(`/api/documents/${sel.dataset.id}/move`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ course_id: to }),
+            });
+            setMsg($("importMsg"), "PDF déplacé vers l’autre cours.", true);
+            await refreshStatus();
+          } catch (e) {
+            setMsg($("importMsg"), e.message, false);
+            sel.value = "";
+          }
+        };
       });
     }
 
@@ -2345,7 +2707,7 @@
             <div id="remediationFiches"></div>
             <div class="actions" id="remediationQuizActions" ${misses.length ? "" : "hidden"} style="margin-top:0.55rem">
               <button type="button" id="quizTargetedBtn">Quiz ciblé (notions manquées)</button>
-              <button type="button" class="secondary" id="quizMissesPodcastBtn">Podcast notions manquées</button>
+              <button type="button" class="secondary" id="quizMissesPodcastBtn" hidden style="display:none">Podcast notions manquées</button>
             </div>
           </div>
           <div class="actions">
@@ -2460,7 +2822,7 @@
         missPodBtn.onclick = () => generateMissesPodcast();
       }
       $("quizToFiches").onclick = () => setHubTab("studyPanel");
-      if ($("quizToProg")) $("quizToProg").onclick = () => setHubTab("podcastSection");
+      if ($("quizToProg")) $("quizToProg").onclick = () => setHubTab("planningPanel");
       $("quizToPdf").onclick = () => {
         const src = lastMissSources[0];
         if (src) jumpToSource(src);
@@ -2641,10 +3003,10 @@
     async function generateMissesPodcast() {
       if (!lastMisses.length && !lastMissNotions.length) {
         setMsg($("podcastMsg"), "Passez d’abord un quiz avec des erreurs.", false);
-        setHubTab("podcastSection");
+        setHubTab("planningPanel");
         return;
       }
-      setHubTab("podcastSection");
+      setHubTab("planningPanel");
       setMsg($("podcastMsg"), "Podcast remédiation (notions manquées + pages PDF)…", true);
       if ($("podcastMissesBtn")) $("podcastMissesBtn").disabled = true;
       const quizBtn = $("quizMissesPodcastBtn");
@@ -2946,6 +3308,334 @@
     };
     $("quizBlockedPdf").onclick = scrollToPdf;
     $("quizBlockedFiches").onclick = () => setHubTab("studyPanel");
+
+
+    /* ---- Planning / methods / reminders / pomodoro ---- */
+    let studyPrefs = { method: "active_recall", reminders_enabled: false, reminder_hour: 18, reminder_minute: 0, reminder_target: "both" };
+    let methodsCache = [];
+    let learningMethodId = null;
+    let pomodoroTimer = null;
+    let pomodoroLeft = 25 * 60;
+
+    async function refreshStudyMethodUi() {
+      try {
+        const data = await api("/api/study/prefs");
+        studyPrefs = data.prefs || studyPrefs;
+      } catch (_) {}
+      const m = methodsCache.find((x) => x.id === studyPrefs.method);
+      const badge = $("studyMethodBadge");
+      if (badge) badge.innerHTML = "Méthode : <strong>" + escapeHtml(m?.name || studyPrefs.method) + "</strong>";
+      const bar = $("pomodoroBar");
+      if (bar) bar.classList.toggle("visible", studyPrefs.method === "pomodoro");
+      const quizMeta = document.querySelector("#quizLaunch p.meta");
+      if (quizMeta && studyPrefs.method === "active_recall") {
+        quizMeta.textContent = "Rappel actif : commencez par le quiz, puis les fiches.";
+      } else if (quizMeta && studyPrefs.method === "interleaving") {
+        quizMeta.textContent = "Entrelacement : alternez quiz et fiches.";
+      } else if (quizMeta && studyPrefs.method === "leitner") {
+        quizMeta.textContent = "Leitner : priorisez les fiches à revoir.";
+      }
+    }
+
+    async function loadMethods() {
+      try {
+        const data = await api("/api/study/methods");
+        methodsCache = data.methods || [];
+        const el = $("methodsList");
+        if (!el) return;
+        el.innerHTML = methodsCache.map((m) => {
+          const on = m.id === studyPrefs.method;
+          return '<div class="fiche-row" style="cursor:default"><div class="preview"><strong>'
+            + escapeHtml(m.name) + (on ? " · active" : "") + '</strong><div class="sub">'
+            + escapeHtml(m.summary) + '</div></div><div class="actions" style="margin:0;flex-shrink:0">'
+            + '<button type="button" class="secondary method-learn" data-id="' + m.id + '">Apprendre</button>'
+            + '<button type="button" class="method-use" data-id="' + m.id + '">' + (on ? "Active" : "Utiliser") + '</button>'
+            + '</div></div>';
+        }).join("");
+        el.querySelectorAll(".method-use").forEach((btn) => {
+          btn.onclick = () => selectMethod(btn.dataset.id);
+        });
+        el.querySelectorAll(".method-learn").forEach((btn) => {
+          btn.onclick = () => showMethodLearn(btn.dataset.id);
+        });
+      } catch (e) {
+        if ($("methodMsg")) setMsg($("methodMsg"), e.message, false);
+      }
+    }
+
+    function showMethodLearn(id) {
+      const m = methodsCache.find((x) => x.id === id);
+      if (!m) return;
+      learningMethodId = id;
+      $("methodLearn").hidden = false;
+      $("methodLearnText").innerHTML = "<strong>" + escapeHtml(m.name) + "</strong><br>"
+        + escapeHtml(m.learn) + "<br><br><em>Dans Thot :</em> " + escapeHtml(m.thot_applies);
+    }
+
+    async function selectMethod(id) {
+      try {
+        const data = await api("/api/study/prefs", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ method: id }),
+        });
+        studyPrefs = data.prefs || studyPrefs;
+        setMsg($("methodMsg"), "Méthode enregistrée.", true);
+        $("methodLearn").hidden = true;
+        await loadMethods();
+        await refreshStudyMethodUi();
+      } catch (e) {
+        setMsg($("methodMsg"), e.message, false);
+      }
+    }
+
+    async function saveReminders() {
+      try {
+        const body = {
+          reminders_enabled: !!$("remindEnabled").checked,
+          reminder_hour: Number($("remindHour").value) || 18,
+          reminder_minute: 0,
+          reminder_target: $("remindTarget").value || "both",
+        };
+        const data = await api("/api/study/prefs", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        studyPrefs = data.prefs || studyPrefs;
+        if (window.ThotAndroid && ThotAndroid.scheduleReminders) {
+          if (studyPrefs.reminders_enabled) {
+            if (ThotAndroid.requestNotifyPermission) ThotAndroid.requestNotifyPermission();
+            ThotAndroid.scheduleReminders(JSON.stringify(studyPrefs));
+            setMsg($("remindMsg"), "Rappels activés (notification Android).", true);
+          } else {
+            if (ThotAndroid.cancelReminders) ThotAndroid.cancelReminders();
+            setMsg($("remindMsg"), "Rappels désactivés.", true);
+          }
+        } else {
+          setMsg($("remindMsg"), studyPrefs.reminders_enabled
+            ? "Préférences sauvées — notifications système sur l’APK."
+            : "Rappels désactivés.", true);
+        }
+      } catch (e) {
+        setMsg($("remindMsg"), e.message, false);
+      }
+    }
+
+    async function refreshPlanning() {
+      try {
+        const prefs = await api("/api/study/prefs");
+        studyPrefs = prefs.prefs || studyPrefs;
+        if ($("remindEnabled")) $("remindEnabled").checked = !!studyPrefs.reminders_enabled;
+        if ($("remindHour")) $("remindHour").value = studyPrefs.reminder_hour ?? 18;
+        if ($("remindTarget")) $("remindTarget").value = studyPrefs.reminder_target || "both";
+      } catch (_) {}
+      await loadMethods();
+      await loadSlots();
+      await loadExams();
+      await loadPlan();
+    }
+
+    async function loadSlots() {
+      try {
+        const data = await api("/api/schedule/class");
+        const el = $("slotsList");
+        if (!el) return;
+        const slots = data.slots || [];
+        if (!slots.length) {
+          el.innerHTML = '<div class="empty-state"><p>Aucun créneau — ajoutez votre EDT.</p></div>';
+          return;
+        }
+        el.innerHTML = slots.map((s) => '<div class="fiche-row" style="cursor:default"><div class="preview"><strong>'
+          + escapeHtml(s.day_label) + " " + escapeHtml(s.start_time) + "–" + escapeHtml(s.end_time)
+          + '</strong><div class="sub">' + escapeHtml(s.label || s.course_title || "Cours")
+          + '</div></div><button type="button" class="ghost slot-del" data-id="' + s.id + '">Suppr.</button></div>').join("");
+        el.querySelectorAll(".slot-del").forEach((btn) => {
+          btn.onclick = async () => {
+            await api("/api/schedule/class/" + btn.dataset.id, { method: "DELETE" });
+            await loadSlots();
+          };
+        });
+      } catch (e) {
+        if ($("slotMsg")) setMsg($("slotMsg"), e.message, false);
+      }
+    }
+
+    async function addSlot() {
+      try {
+        await api("/api/schedule/class", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            course_id: activeCourseId || null,
+            day_of_week: Number($("slotDay").value),
+            start_time: $("slotStart").value || "09:00",
+            end_time: $("slotEnd").value || "11:00",
+            label: $("slotLabel").value || "",
+          }),
+        });
+        $("slotLabel").value = "";
+        setMsg($("slotMsg"), "Créneau ajouté.", true);
+        await loadSlots();
+      } catch (e) {
+        setMsg($("slotMsg"), e.message, false);
+      }
+    }
+
+    async function loadExams() {
+      try {
+        const data = await api("/api/schedule/exams");
+        const el = $("examsList");
+        if (!el) return;
+        const exams = data.exams || [];
+        if (!exams.length) {
+          el.innerHTML = '<div class="empty-state"><p>Aucun examen — ajoutez une date pour guider le plan.</p></div>';
+          return;
+        }
+        el.innerHTML = exams.map((e) => '<div class="fiche-row" style="cursor:default"><div class="preview"><strong>'
+          + escapeHtml(e.title) + '</strong><div class="sub">' + escapeHtml(e.exam_date) + " · "
+          + escapeHtml(e.course_title || "") + '</div></div><button type="button" class="ghost exam-del" data-id="'
+          + e.id + '">Suppr.</button></div>').join("");
+        el.querySelectorAll(".exam-del").forEach((btn) => {
+          btn.onclick = async () => {
+            await api("/api/schedule/exams/" + btn.dataset.id, { method: "DELETE" });
+            await loadExams();
+          };
+        });
+      } catch (e) {
+        if ($("examMsg")) setMsg($("examMsg"), e.message, false);
+      }
+    }
+
+    async function addExam() {
+      if (!activeCourseId) return setMsg($("examMsg"), "Ouvrez un cours d’abord.", false);
+      try {
+        await api("/api/schedule/exams", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            course_id: activeCourseId,
+            title: $("examTitle").value || "Examen",
+            exam_date: $("examDate").value,
+          }),
+        });
+        $("examTitle").value = "";
+        setMsg($("examMsg"), "Examen ajouté.", true);
+        await loadExams();
+      } catch (e) {
+        setMsg($("examMsg"), e.message, false);
+      }
+    }
+
+    async function loadPlan() {
+      try {
+        const data = await api("/api/schedule/plan");
+        const el = $("planList");
+        if (!el) return;
+        const sessions = data.sessions || [];
+        if (!sessions.length) {
+          el.innerHTML = '<div class="empty-state"><p>Pas encore de plan — générez-en un après examens / EDT.</p></div>';
+          return;
+        }
+        let html = "";
+        let last = "";
+        for (const s of sessions) {
+          if (s.scheduled_date !== last) {
+            last = s.scheduled_date;
+            html += '<div class="plan-day">' + escapeHtml(last) + "</div>";
+          }
+          html += '<button type="button" class="fiche-row plan-session" data-id="' + s.id + '"><span class="preview"><strong>'
+            + escapeHtml(s.title) + (s.done ? " · fait" : "") + '</strong><span class="sub">'
+            + escapeHtml(s.kind) + " · " + escapeHtml(s.method) + '</span></span><span class="chev">'
+            + (s.done ? "✓" : "›") + "</span></button>";
+        }
+        el.innerHTML = html;
+        el.querySelectorAll(".plan-session").forEach((btn) => {
+          btn.onclick = async () => {
+            try {
+              await api("/api/schedule/sessions/" + btn.dataset.id + "/done", {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ done: true }),
+              });
+              setHubTab("studyPanel");
+              await loadPlan();
+            } catch (e) {
+              setMsg($("planMsg"), e.message, false);
+            }
+          };
+        });
+      } catch (e) {
+        if ($("planMsg")) setMsg($("planMsg"), e.message, false);
+      }
+    }
+
+    async function generatePlanUi() {
+      if ($("planGenBtn")) $("planGenBtn").disabled = true;
+      try {
+        const data = await api("/api/schedule/plan", { method: "POST" });
+        setMsg($("planMsg"), "Plan : " + (data.count || 0) + " session(s).", true);
+        await loadPlan();
+      } catch (e) {
+        setMsg($("planMsg"), e.message, false);
+      } finally {
+        if ($("planGenBtn")) $("planGenBtn").disabled = false;
+      }
+    }
+
+    function tickPomodoro() {
+      pomodoroLeft -= 1;
+      if (pomodoroLeft <= 0) {
+        clearInterval(pomodoroTimer);
+        pomodoroTimer = null;
+        $("pomodoroClock").textContent = "00:00";
+        $("pomodoroStart").hidden = false;
+        $("pomodoroStop").hidden = true;
+        return;
+      }
+      const m = String(Math.floor(pomodoroLeft / 60)).padStart(2, "0");
+      const s = String(pomodoroLeft % 60).padStart(2, "0");
+      $("pomodoroClock").textContent = m + ":" + s;
+    }
+
+    if ($("methodUseBtn")) $("methodUseBtn").onclick = () => learningMethodId && selectMethod(learningMethodId);
+    if ($("methodLearnBack")) $("methodLearnBack").onclick = () => { $("methodLearn").hidden = true; };
+    if ($("remindSaveBtn")) $("remindSaveBtn").onclick = () => saveReminders();
+    if ($("slotAddBtn")) $("slotAddBtn").onclick = () => addSlot();
+    if ($("examAddBtn")) $("examAddBtn").onclick = () => addExam();
+    if ($("planGenBtn")) $("planGenBtn").onclick = () => generatePlanUi();
+    if ($("readerFsEnter")) $("readerFsEnter").onclick = () => enterReaderFullscreen();
+    if ($("readerFsExit")) $("readerFsExit").onclick = () => { exitReaderFullscreen(); lockPortraitOrientation(); };
+    if ($("readerNotesBtn")) $("readerNotesBtn").onclick = () => openReaderNotes();
+    if ($("readerNotesBtnFs")) $("readerNotesBtnFs").onclick = () => openReaderNotes();
+    if ($("readerNotesClose")) $("readerNotesClose").onclick = () => closeReaderNotes();
+    if ($("readerNoteSave")) $("readerNoteSave").onclick = () => saveReaderNote();
+    if ($("readerNoteNew")) $("readerNoteNew").onclick = () => {
+      readerNoteId = null;
+      $("readerNoteTitle").value = "Note en lecture";
+      $("readerNoteBody").value = "";
+      setMsg($("readerNoteMsg"), "", true);
+    };
+    if ($("pomodoroStart")) $("pomodoroStart").onclick = () => {
+      pomodoroLeft = 25 * 60;
+      $("pomodoroStart").hidden = true;
+      $("pomodoroStop").hidden = false;
+      clearInterval(pomodoroTimer);
+      pomodoroTimer = setInterval(tickPomodoro, 1000);
+      tickPomodoro();
+    };
+    if ($("pomodoroStop")) $("pomodoroStop").onclick = () => {
+      clearInterval(pomodoroTimer);
+      pomodoroTimer = null;
+      pomodoroLeft = 25 * 60;
+      $("pomodoroClock").textContent = "25:00";
+      $("pomodoroStart").hidden = false;
+      $("pomodoroStop").hidden = true;
+    };
+
+    api("/api/study/methods").then((d) => { methodsCache = d.methods || []; }).catch(() => {});
+    api("/api/study/prefs").then((d) => { studyPrefs = d.prefs || studyPrefs; refreshStudyMethodUi(); }).catch(() => {});
+
 
     // Expose for demos / agent screenshots (no secrets)
     window.jumpToSource = jumpToSource;

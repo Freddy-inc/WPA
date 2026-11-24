@@ -8,6 +8,7 @@ pub mod llm;
 pub mod notes;
 pub mod pdf;
 pub mod podcast;
+pub mod schedule;
 pub mod server;
 pub mod source;
 pub mod tts;

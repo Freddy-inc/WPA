@@ -7,7 +7,7 @@ import java.io.FileOutputStream
 
 object AssetHelper {
     private const val ASSET_ROOT = "thot-static"
-    private const val MARKER = ".thot_static_v3"
+    private const val MARKER = ".thot_static_v4"
 
     /** Copy packaged UI from APK assets into app files (axum ServeDir needs real paths). */
     fun ensureStaticDir(context: Context): File {

@@ -16,4 +16,6 @@
     <string name="choose_pdf">Choisir un PDF</string>
     <string name="mic_denied">Micro refusé — activez-le dans les réglages Android pour dicter des notes.</string>
     <string name="speech_unavailable">Reconnaissance vocale indisponible sur cet appareil (pas de service Google/Speech).</string>
+    <string name="notify_denied">Notifications refusées — activez-les dans les réglages pour les rappels d’étude.</string>
+    <string name="reminders_scheduled">Rappels d’étude planifiés</string>
 </resources>

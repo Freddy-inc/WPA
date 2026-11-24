@@ -19,6 +19,7 @@ use crate::llm::LlmClient;
 use crate::notes;
 use crate::pdf;
 use crate::podcast;
+use crate::schedule::{self, StudyPrefs};
 use crate::web_verify::WebVerifier;
 
 #[derive(Clone)]
@@ -52,9 +53,24 @@ pub fn router(state: AppState) -> Router {
         .route("/api/import", post(import_pdf))
         .route("/api/documents", get(list_documents))
         .route("/api/documents/{id}/activate", put(activate_document))
+        .route("/api/documents/{id}/move", put(move_document))
         .route("/api/documents/{id}", delete(delete_document))
         .route("/api/documents/{id}/pdf", get(document_pdf))
         .route("/api/course/pdf", get(course_pdf))
+        .route("/api/study/methods", get(list_methods))
+        .route("/api/study/prefs", get(get_study_prefs).put(put_study_prefs))
+        .route(
+            "/api/schedule/class",
+            get(list_class_slots).post(create_class_slot),
+        )
+        .route("/api/schedule/class/{id}", delete(delete_class_slot))
+        .route("/api/schedule/exams", get(list_exams).post(create_exam))
+        .route("/api/schedule/exams/{id}", delete(delete_exam))
+        .route(
+            "/api/schedule/plan",
+            get(list_revision_plan).post(generate_revision_plan),
+        )
+        .route("/api/schedule/sessions/{id}/done", put(mark_session_done))
         .route("/api/glossary", post(define_glossary))
         .route("/api/generate", post(generate_content))
         .route("/api/fiches", get(list_fiches).post(create_fiche))
@@ -565,6 +581,290 @@ async fn delete_document(
         "ok": true,
         "documents": docs.iter().map(|d| doc_summary(d, &st)).collect::<Vec<_>>(),
         "active_document": active.as_ref().map(|d| doc_summary(d, &st)),
+    })))
+}
+
+#[derive(Deserialize)]
+struct MoveDocumentBody {
+    course_id: i64,
+}
+
+async fn move_document(
+    State(st): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    Json(body): Json<MoveDocumentBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let doc = st
+        .db
+        .move_document(id, body.course_id)
+        .await
+        .map_err(|e| ApiError::bad(e.to_string()))?;
+    let path = st.doc_pdf_path(doc.id);
+    if path.is_file() {
+        let _ = std::fs::copy(&path, st.data_dir.join("course.pdf"));
+    }
+    let from_docs = st
+        .db
+        .list_documents(doc.course_id)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(json!({
+        "ok": true,
+        "document": doc_summary(&doc, &st),
+        "course_id": doc.course_id,
+        "documents": from_docs.iter().map(|d| doc_summary(d, &st)).collect::<Vec<_>>(),
+        "note": "PDF réaffecté au cours cible. Glossaire/fiches/quiz restent liés à leur cours d’origine.",
+    })))
+}
+
+async fn list_methods() -> Json<serde_json::Value> {
+    Json(schedule::methods_json())
+}
+
+async fn get_study_prefs(
+    State(st): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let prefs = StudyPrefs::load(&st.db).await.map_err(ApiError::from)?;
+    Ok(Json(json!({
+        "ok": true,
+        "prefs": prefs,
+        "methods": schedule::METHODS.iter().map(|m| m.id).collect::<Vec<_>>(),
+    })))
+}
+
+#[derive(Deserialize)]
+struct StudyPrefsBody {
+    method: Option<String>,
+    reminders_enabled: Option<bool>,
+    reminder_hour: Option<u8>,
+    reminder_minute: Option<u8>,
+    reminder_target: Option<String>,
+}
+
+async fn put_study_prefs(
+    State(st): State<Arc<AppState>>,
+    Json(body): Json<StudyPrefsBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let mut prefs = StudyPrefs::load(&st.db).await.map_err(ApiError::from)?;
+    if let Some(m) = body.method {
+        if schedule::method_by_id(&m).is_none() {
+            return Err(ApiError::bad("méthode inconnue"));
+        }
+        prefs.method = m;
+    }
+    if let Some(v) = body.reminders_enabled {
+        prefs.reminders_enabled = v;
+    }
+    if let Some(h) = body.reminder_hour {
+        if h > 23 {
+            return Err(ApiError::bad("heure invalide"));
+        }
+        prefs.reminder_hour = h;
+    }
+    if let Some(m) = body.reminder_minute {
+        if m > 59 {
+            return Err(ApiError::bad("minute invalide"));
+        }
+        prefs.reminder_minute = m;
+    }
+    if let Some(t) = body.reminder_target {
+        if !matches!(t.as_str(), "fiches" | "quiz" | "both") {
+            return Err(ApiError::bad("cible rappel: fiches | quiz | both"));
+        }
+        prefs.reminder_target = t;
+    }
+    prefs.save(&st.db).await.map_err(ApiError::from)?;
+    Ok(Json(json!({
+        "ok": true,
+        "prefs": prefs,
+        "android_hint": "Sur APK, ThotAndroid.scheduleReminders applique ces préférences en notifications système.",
+    })))
+}
+
+async fn course_title_map(
+    st: &AppState,
+) -> Result<std::collections::HashMap<i64, String>, ApiError> {
+    let courses = st.db.list_courses().await.map_err(ApiError::from)?;
+    Ok(courses.into_iter().map(|c| (c.id, c.title)).collect())
+}
+
+async fn list_class_slots(
+    State(st): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let titles = course_title_map(&st).await?;
+    let slots = st.db.list_class_slots().await.map_err(ApiError::from)?;
+    Ok(Json(json!({
+        "slots": slots.iter().map(|s| {
+            let t = s.course_id.and_then(|id| titles.get(&id).map(|x| x.as_str()));
+            schedule::slot_json(s, t)
+        }).collect::<Vec<_>>(),
+    })))
+}
+
+#[derive(Deserialize)]
+struct ClassSlotBody {
+    course_id: Option<i64>,
+    day_of_week: i64,
+    start_time: String,
+    end_time: String,
+    label: Option<String>,
+}
+
+async fn create_class_slot(
+    State(st): State<Arc<AppState>>,
+    Json(body): Json<ClassSlotBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let slot = st
+        .db
+        .add_class_slot(
+            body.course_id,
+            body.day_of_week,
+            body.start_time.trim(),
+            body.end_time.trim(),
+            body.label.as_deref().unwrap_or("").trim(),
+        )
+        .await
+        .map_err(|e| ApiError::bad(e.to_string()))?;
+    let titles = course_title_map(&st).await?;
+    let t = slot
+        .course_id
+        .and_then(|id| titles.get(&id).map(|x| x.as_str()));
+    Ok(Json(json!({ "ok": true, "slot": schedule::slot_json(&slot, t) })))
+}
+
+async fn delete_class_slot(
+    State(st): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let ok = st
+        .db
+        .delete_class_slot(id)
+        .await
+        .map_err(ApiError::from)?;
+    if !ok {
+        return Err(ApiError::not_found("Créneau introuvable"));
+    }
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn list_exams(
+    State(st): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let titles = course_title_map(&st).await?;
+    let exams = st.db.list_exams().await.map_err(ApiError::from)?;
+    Ok(Json(json!({
+        "exams": exams.iter().map(|e| {
+            schedule::exam_json(e, titles.get(&e.course_id).map(|x| x.as_str()))
+        }).collect::<Vec<_>>(),
+    })))
+}
+
+#[derive(Deserialize)]
+struct ExamBody {
+    course_id: i64,
+    title: String,
+    exam_date: String,
+}
+
+async fn create_exam(
+    State(st): State<Arc<AppState>>,
+    Json(body): Json<ExamBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let title = body.title.trim();
+    if title.is_empty() {
+        return Err(ApiError::bad("titre d’examen requis"));
+    }
+    let date = body.exam_date.trim();
+    if chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").is_err() {
+        return Err(ApiError::bad("date invalide (AAAA-MM-JJ)"));
+    }
+    let exam = st
+        .db
+        .add_exam(body.course_id, title, date)
+        .await
+        .map_err(|e| ApiError::bad(e.to_string()))?;
+    let titles = course_title_map(&st).await?;
+    Ok(Json(json!({
+        "ok": true,
+        "exam": schedule::exam_json(&exam, titles.get(&exam.course_id).map(|x| x.as_str())),
+    })))
+}
+
+async fn delete_exam(
+    State(st): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let ok = st.db.delete_exam(id).await.map_err(ApiError::from)?;
+    if !ok {
+        return Err(ApiError::not_found("Examen introuvable"));
+    }
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn list_revision_plan(
+    State(st): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let titles = course_title_map(&st).await?;
+    let sessions = st
+        .db
+        .list_revision_sessions()
+        .await
+        .map_err(ApiError::from)?;
+    let prefs = StudyPrefs::load(&st.db).await.map_err(ApiError::from)?;
+    Ok(Json(json!({
+        "prefs": prefs,
+        "sessions": sessions.iter().map(|s| {
+            let t = s.course_id.and_then(|id| titles.get(&id).map(|x| x.as_str()));
+            schedule::session_json(s, t)
+        }).collect::<Vec<_>>(),
+    })))
+}
+
+async fn generate_revision_plan(
+    State(st): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let sessions = schedule::generate_plan(&st.db)
+        .await
+        .map_err(|e| ApiError::bad(e.to_string()))?;
+    let titles = course_title_map(&st).await?;
+    let prefs = StudyPrefs::load(&st.db).await.map_err(ApiError::from)?;
+    Ok(Json(json!({
+        "ok": true,
+        "prefs": prefs,
+        "count": sessions.len(),
+        "sessions": sessions.iter().map(|s| {
+            let t = s.course_id.and_then(|id| titles.get(&id).map(|x| x.as_str()));
+            schedule::session_json(s, t)
+        }).collect::<Vec<_>>(),
+        "engine": "rules",
+        "note": "Plan rule-based (EDT + examens + méthode). Groq non requis.",
+    })))
+}
+
+#[derive(Deserialize)]
+struct SessionDoneBody {
+    done: Option<bool>,
+}
+
+async fn mark_session_done(
+    State(st): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    Json(body): Json<SessionDoneBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let done = body.done.unwrap_or(true);
+    let row = st
+        .db
+        .mark_revision_done(id, done)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError::not_found("Session introuvable"))?;
+    let titles = course_title_map(&st).await?;
+    let t = row
+        .course_id
+        .and_then(|id| titles.get(&id).map(|x| x.as_str()));
+    Ok(Json(json!({
+        "ok": true,
+        "session": schedule::session_json(&row, t),
     })))
 }
 
